@@ -36,6 +36,7 @@ interface AppendSuccess {
   layerName: string;
   objectIds: number[];
   attachmentsPerFeature: number;
+  repairedCount: number;
 }
 
 interface AppendFailure {
@@ -58,6 +59,8 @@ type FileState =
   | { kind: "invalid"; name: string; message: string };
 
 const LABEL_FIELDS = ["parcel_upi", "plan_id", "name"];
+/** Rows rendered in the polygon list; flagged polygons are always listed first. */
+const MAX_LIST_ROWS = 400;
 
 export function featureLabel(feature: UploadFeature, index: number): string {
   for (const key of LABEL_FIELDS) {
@@ -102,6 +105,13 @@ export default function UploadWorkspace({
   }, [layer.fields, mapping]);
 
   const count = parsed?.features.length ?? 0;
+  const listOrder = useMemo(() => {
+    if (!parsed) return [];
+    const indexes = parsed.features.map((_, i) => i);
+    const flagged = indexes.filter((i) => parsed.features[i]!.selfIntersection);
+    const rest = indexes.filter((i) => !parsed.features[i]!.selfIntersection);
+    return [...flagged, ...rest].slice(0, MAX_LIST_ROWS);
+  }, [parsed]);
   const totalHa = parsed ? parsed.features.reduce((sum, f) => sum + f.areaSqMeters, 0) / 10_000 : 0;
   const done = submit.kind === "success";
   // Multipart overhead is small; keep a 32 KB margin under the server limit.
@@ -235,8 +245,25 @@ export default function UploadWorkspace({
                 {mapping.ignored.length > 0 && <ChipRow label="Not in the layer, ignored" names={mapping.ignored} tone="muted" />}
               </div>
 
-              <ul className="scroll-slim max-h-48 space-y-1 overflow-y-auto pr-1" onMouseLeave={() => setHovered(null)}>
-                {parsed.features.map((f, i) => (
+              {parsed.repairCount > 0 && (
+                <div className="flex gap-3 rounded-2xl border border-[#ff4d5e]/30 bg-[#ff4d5e]/10 p-3.5 text-[13px] leading-5 text-red-100">
+                  <IconAlert className="mt-0.5 shrink-0 text-[#ff8a95]" width={16} height={16} />
+                  <div>
+                    <p className="font-semibold">
+                      {parsed.repairCount} polygon{parsed.repairCount === 1 ? "" : "s"} cross{parsed.repairCount === 1 ? "es" : ""} itself
+                    </p>
+                    <p className="mt-0.5 opacity-90">
+                      Shown in red. On submit, ArcGIS repairs {parsed.repairCount === 1 ? "it" : "them"} (Simplify, as in Repair Geometry) before
+                      appending. Everything else is appended unchanged.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <ul className="scroll-slim max-h-56 space-y-1 overflow-y-auto pr-1" onMouseLeave={() => setHovered(null)}>
+                {listOrder.map((i) => {
+                  const f = parsed.features[i]!;
+                  return (
                   <li key={i}>
                     <button
                       type="button"
@@ -246,12 +273,28 @@ export default function UploadWorkspace({
                         selected === i ? "bg-plan/15 ring-1 ring-plan/40" : "hover:bg-white/5"
                       }`}
                     >
-                      <span className="grid size-6 shrink-0 place-items-center rounded-lg bg-plan/15 font-mono text-[10px] text-plan">{i + 1}</span>
+                      <span
+                        className={`grid h-6 min-w-6 shrink-0 place-items-center rounded-lg px-1 font-mono text-[10px] ${
+                          f.selfIntersection ? "bg-[#ff4d5e]/20 text-[#ff8a95]" : "bg-plan/15 text-plan"
+                        }`}
+                      >
+                        {i + 1}
+                      </span>
                       <span className="min-w-0 flex-1 truncate font-mono text-slate-200">{featureLabel(f, i)}</span>
-                      <span className="shrink-0 font-mono text-[11px] text-slate-500">{formatArea(f.areaSqMeters)}</span>
+                      {f.selfIntersection ? (
+                        <span className="shrink-0 rounded-md bg-[#ff4d5e]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#ff8a95]">
+                          repair
+                        </span>
+                      ) : (
+                        <span className="shrink-0 font-mono text-[11px] text-slate-500">{formatArea(f.areaSqMeters)}</span>
+                      )}
                     </button>
                   </li>
-                ))}
+                  );
+                })}
+                {count > listOrder.length && (
+                  <li className="px-3 py-2 text-xs text-slate-500">+ {(count - listOrder.length).toLocaleString()} more on the map</li>
+                )}
               </ul>
 
               {parsed.warnings.length > 0 && (
@@ -320,11 +363,14 @@ export default function UploadWorkspace({
                   </p>
                   <p className="text-[13px] text-slate-300">
                     to {submit.result.layerName}
+                    {submit.result.repairedCount > 0 && ` · ${submit.result.repairedCount} repaired`}
                     {submit.result.attachmentsPerFeature > 0 && ` · ${submit.result.attachmentsPerFeature} PDF each`}
                   </p>
                 </div>
               </div>
-              <p className="mt-3 font-mono text-[11px] leading-5 text-slate-400">OBJECTID {submit.result.objectIds.join(", ")}</p>
+              <p className="mt-3 font-mono text-[11px] leading-5 text-slate-400">
+                OBJECTID {formatIdRange(submit.result.objectIds)}
+              </p>
             </div>
           )}
           {submit.kind === "error" && (
@@ -508,6 +554,16 @@ function Callout({ tone, title, children }: { tone: "red" | "amber"; title: stri
       </div>
     </div>
   );
+}
+
+/** "1, 2, 3" for a few IDs; "1001–3212 (2,212)" for long consecutive runs. */
+function formatIdRange(ids: number[]): string {
+  if (ids.length <= 12) return ids.join(", ");
+  const sorted = [...ids].sort((a, b) => a - b);
+  const consecutive = sorted.every((id, i) => i === 0 || id === sorted[i - 1]! + 1);
+  return consecutive
+    ? `${sorted[0]}–${sorted[sorted.length - 1]} (${ids.length.toLocaleString()})`
+    : `${sorted.slice(0, 10).join(", ")} … +${(ids.length - 10).toLocaleString()} more`;
 }
 
 function initials(name: string): string {

@@ -3,7 +3,8 @@
  * before the OAuth app and real layer exist. It implements just the REST surface the app uses:
  *
  *   /portal/sharing/rest/oauth2/authorize|token|revokeToken   (PKCE verified)
- *   /portal/sharing/rest/community/self
+ *   /portal/sharing/rest/community/self, /portal/sharing/rest/portals/self (helper geometry service)
+ *   /arcgis/rest/services/Utilities/Geometry/GeometryServer/simplify  (returns the rings unchanged; counts calls)
  *   /arcgis/rest/services/Physical_Plans/FeatureServer/0  (+ applyEdits, query,
  *     {oid}/addAttachment, {oid}/attachments, {oid}/attachments/{id})
  *
@@ -55,6 +56,8 @@ const authCodes = new Map<string, { challenge: string; username: string; redirec
 const refreshTokens = new Map<string, string>(); // refresh token -> username
 const accessTokens = new Map<string, { username: string; expiresAt: number }>();
 let nextObjectId = 1;
+const stats = { simplifyCalls: 0, simplifiedGeometries: 0 };
+const GEOMETRY_SERVER_PATH = "/arcgis/rest/services/Utilities/Geometry/GeometryServer";
 let nextAttachmentId = 1;
 
 const ACCESS_TOKEN_SECONDS = 30 * 60;
@@ -227,6 +230,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     return sendJson(res, { username: user.username, fullName: user.fullName, orgId: "devorg", privileges: user.privileges, groups: user.groups });
   }
 
+  if (path === "/portal/sharing/rest/portals/self") {
+    if (!authenticate(params)) return sendJson(res, arcgisError(498, "Invalid token."));
+    return sendJson(res, { id: "devorg", name: "Rwanda Land (emulator)", helperServices: { geometry: { url: `${ORIGIN}${GEOMETRY_SERVER_PATH}` } } });
+  }
+
+  if (path === `${GEOMETRY_SERVER_PATH}/simplify`) {
+    if (!authenticate(params)) return sendJson(res, arcgisError(498, "Invalid token."));
+    const input = JSON.parse(params.get("geometries") ?? "{}") as { geometries?: { rings: number[][][] }[] };
+    const geometries = input.geometries ?? [];
+    stats.simplifyCalls++;
+    stats.simplifiedGeometries += geometries.length;
+    return sendJson(res, { geometries: geometries.map((g) => ({ rings: g.rings })) });
+  }
+
   // ---- Feature layer ---------------------------------------------------------------------------
   if (path.startsWith(LAYER_PATH)) {
     const username = authenticate(params);
@@ -289,6 +306,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   // ---- Dev viewer --------------------------------------------------------------------------------
   if (path === "/") return renderIndex(res);
+  if (path === "/stats.json") return sendJson(res, stats);
   if (path === "/records.json") {
     return sendJson(res, [...features.values()].map((f) => ({ ...f.attributes, attachments: f.attachments.map((x) => x.name), geometry: f.geometry })));
   }

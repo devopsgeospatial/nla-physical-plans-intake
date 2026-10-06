@@ -167,6 +167,29 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.ok(stored.every((r) => r.plan_id === "PP-MUH-2026-015" && r.created_user === "planner.huye" && r.attachments.length === 0));
   });
 
+  it("appends a large file (2,500 parcels, over the old 2,000 cap) and repairs a self-intersecting parcel via ArcGIS simplify", async () => {
+    const planner = new Browser();
+    await planner.signIn("planner.muhanga");
+    const statsBefore = await (await fetch(`${emulatorUrl}/stats.json`)).json();
+    const square = (dx: number, dy: number) => [[29.75 + dx, -2.1 + dy], [29.7502 + dx, -2.1 + dy], [29.7502 + dx, -2.0998 + dy], [29.75 + dx, -2.0998 + dy], [29.75 + dx, -2.1 + dy]];
+    const bowtie = [[29.7, -2.1], [29.7002, -2.0998], [29.7002, -2.1], [29.7, -2.0998], [29.7, -2.1]];
+    const features = Array.from({ length: 2_500 }, (_, i) => ({
+      type: "Feature",
+      properties: { parcel_upi: `9/99/${i}`, plan_id: "PP-BULK-1" },
+      geometry: { type: "Polygon", coordinates: [i === 2019 ? bowtie : square((i % 50) * 0.0003, Math.floor(i / 50) * 0.0003)] },
+    }));
+    const blob = new Blob([JSON.stringify({ type: "FeatureCollection", features })]);
+    const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: ["bulk.geojson", "application/geo+json", blob] }) });
+    const body = await res.json();
+    assert.equal(res.status, 201, JSON.stringify(body).slice(0, 300));
+    assert.equal(body.objectIds.length, 2_500);
+    assert.equal(body.repairedCount, 1);
+    const statsAfter = await (await fetch(`${emulatorUrl}/stats.json`)).json();
+    assert.equal(statsAfter.simplifiedGeometries - statsBefore.simplifiedGeometries, 1, "only the flagged parcel is sent to simplify");
+    const stored = (await records()).filter((r) => r.plan_id === "PP-BULK-1");
+    assert.equal(stored.length, 2_500);
+  });
+
   it("is all-or-nothing: if an attachment fails, the appended records are removed again", async () => {
     const planner = new Browser();
     await planner.signIn("planner.muhanga");
@@ -192,11 +215,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
       return { status: res.status, body: await res.json() };
     };
 
-    let r = await post({ file: ["samples/invalid-self-intersecting.geojson", "application/geo+json"] });
-    assert.equal(r.status, 422);
-    assert.match(r.body.error, /self-intersecting/);
-
-    r = await post({ file: ["samples/invalid-projected-coordinates.geojson", "application/geo+json"] });
+    let r = await post({ file: ["samples/invalid-projected-coordinates.geojson", "application/geo+json"] });
     assert.equal(r.status, 422);
     assert.match(r.body.error, /projected coordinate system/);
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Feature, FeatureCollection } from "geojson";
-import type { GeoJSON as LeafletGeoJSON, Layer, Map as LeafletMap, Path, TileLayer } from "leaflet";
+import type { GeoJSON as LeafletGeoJSON, Layer, LayerGroup, Map as LeafletMap, Path, TileLayer } from "leaflet";
 import type { UploadFeature } from "@/lib/geo/parse-upload";
 
 interface Props {
@@ -35,7 +35,8 @@ const BASEMAPS = {
 } as const;
 type BasemapKey = keyof typeof BASEMAPS;
 
-const COLORS = { plan: "#ffb020", saved: "#20a35c" };
+const COLORS = { plan: "#ffb020", saved: "#20a35c", repair: "#ff4d5e" };
+const MAX_KINK_MARKERS = 500;
 const MAX_LABELS = 40;
 const MAX_POPUP_ROWS = 24;
 
@@ -45,6 +46,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   const mapRef = useRef<LeafletMap | null>(null);
   const leafletRef = useRef<typeof import("leaflet") | null>(null);
   const dataLayerRef = useRef<LeafletGeoJSON | null>(null);
+  const kinkLayerRef = useRef<LayerGroup | null>(null);
   const featureLayersRef = useRef<Path[]>([]);
   const baseLayersRef = useRef<TileLayer[]>([]);
   const propsRef = useRef({ features, labels, appended, onSelect });
@@ -58,7 +60,8 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
     void import("leaflet").then((L) => {
       if (disposed || !containerRef.current) return;
       leafletRef.current = L;
-      const map = L.map(containerRef.current, { center: [-1.95, 29.95], zoom: 9, zoomControl: false, attributionControl: true });
+      // Canvas rendering keeps thousands of parcels responsive.
+      const map = L.map(containerRef.current, { center: [-1.95, 29.95], zoom: 9, zoomControl: false, attributionControl: true, preferCanvas: true });
       L.control.zoom({ position: "bottomright" }).addTo(map);
       L.control.scale({ position: "bottomright", imperial: false }).addTo(map);
       mapRef.current = map;
@@ -89,6 +92,13 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   // ---- data ------------------------------------------------------------------------------------
   propsRef.current = { features, labels, appended, onSelect };
 
+  /** Repair-flagged polygons are red until appended (by then ArcGIS has repaired them). */
+  const styleFor = (index: number, highlighted: boolean) => {
+    const { features: current, appended: saved } = propsRef.current;
+    const state: PolygonState = saved ? "saved" : current?.[index]?.selfIntersection ? "repair" : "plan";
+    return highlighted ? highlightStyle(state) : baseStyle(state);
+  };
+
   useEffect(() => {
     const L = leafletRef.current;
     const map = mapRef.current;
@@ -96,6 +106,8 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
 
     dataLayerRef.current?.remove();
     dataLayerRef.current = null;
+    kinkLayerRef.current?.remove();
+    kinkLayerRef.current = null;
     featureLayersRef.current = [];
     if (!features || features.length === 0) return;
 
@@ -104,7 +116,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
       features: features.map((f, i) => ({ type: "Feature", geometry: f.geometry, properties: { ...f.properties, __i: i } })),
     };
     const layer = L.geoJSON(collection, {
-      style: () => baseStyle(propsRef.current.appended),
+      style: (feature) => styleFor(feature?.properties?.__i as number, false),
       onEachFeature: (feature: Feature, leafletLayer: Layer) => {
         const i = feature.properties?.__i as number;
         featureLayersRef.current[i] = leafletLayer as Path;
@@ -120,13 +132,25 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
       },
     }).addTo(map);
     dataLayerRef.current = layer;
+
+    // Mark where flagged polygons cross themselves.
+    const kinks = features.flatMap((f, i) => (f.selfIntersection ? [{ i, at: f.selfIntersection }] : [])).slice(0, MAX_KINK_MARKERS);
+    if (kinks.length > 0) {
+      kinkLayerRef.current = L.layerGroup(
+        kinks.map(({ i, at }) =>
+          L.circleMarker([at[1], at[0]], { radius: 5, color: "#fff", weight: 2, fillColor: COLORS.repair, fillOpacity: 1 }).on("click", () =>
+            propsRef.current.onSelect(i),
+          ),
+        ),
+      ).addTo(map);
+    }
     map.flyToBounds(layer.getBounds(), { ...fitPadding(), maxZoom: 18, duration: 1.1 });
   }, [features, ready]);
 
   // ---- appearance updates ----------------------------------------------------------------------
   useEffect(() => {
     featureLayersRef.current.forEach((l, i) => {
-      l.setStyle(i === hovered || i === selected ? highlightStyle(appended) : baseStyle(appended));
+      l.setStyle(styleFor(i, i === hovered || i === selected));
       if (i === hovered || i === selected) l.bringToFront();
     });
   }, [hovered, selected, appended]);
@@ -173,14 +197,16 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   );
 }
 
-function baseStyle(appended: boolean) {
-  const color = appended ? COLORS.saved : COLORS.plan;
-  return { color, weight: 2.5, opacity: 1, fillColor: color, fillOpacity: 0.22 };
+type PolygonState = "plan" | "saved" | "repair";
+
+function baseStyle(state: PolygonState) {
+  const color = COLORS[state];
+  return { color, weight: 2.5, opacity: 1, fillColor: color, fillOpacity: 0.22, dashArray: state === "repair" ? "6 4" : undefined };
 }
 
-function highlightStyle(appended: boolean) {
-  const color = appended ? COLORS.saved : COLORS.plan;
-  return { color: "#ffffff", weight: 3.5, opacity: 1, fillColor: color, fillOpacity: 0.45 };
+function highlightStyle(state: PolygonState) {
+  const color = COLORS[state];
+  return { color: "#ffffff", weight: 3.5, opacity: 1, fillColor: color, fillOpacity: 0.45, dashArray: undefined };
 }
 
 /** Keep fitted geometry clear of the floating panel on desktop. */

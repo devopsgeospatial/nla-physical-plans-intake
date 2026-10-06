@@ -55,3 +55,37 @@ export async function projectPolygon(
   if (!rings || rings.length === 0) throw new ArcGisRequestError("Geometry service returned an empty projection.", url);
   return { rings, spatialReference: outSR };
 }
+
+interface SimplifyResponse {
+  geometries?: { rings?: [number, number][][] }[];
+}
+
+/**
+ * Repairs polygons with the ArcGIS geometry service "simplify" operation (the engine behind ArcGIS
+ * Repair Geometry): resolves self-intersections, fixes ring orientation and removes duplicate
+ * vertices. Results are in input order; a polygon that collapses to nothing comes back with no rings.
+ */
+export async function simplifyPolygons(
+  geometryServiceUrl: string,
+  polygons: EsriPolygon[],
+  sr: EsriSpatialReference,
+  tokens: TokenProvider,
+): Promise<EsriPolygon[]> {
+  const url = `${geometryServiceUrl}/simplify`;
+  const results: EsriPolygon[] = [];
+  const BATCH = 200;
+  for (let start = 0; start < polygons.length; start += BATCH) {
+    const batch = polygons.slice(start, start + BATCH);
+    const response = await withToken(tokens, (token) =>
+      arcgisRequest<SimplifyResponse>(
+        url,
+        { sr, geometries: { geometryType: "esriGeometryPolygon", geometries: batch.map((p) => ({ rings: p.rings })) } },
+        { referer: tokens.referer, token, timeoutMs: 120_000 },
+      ),
+    );
+    const out = response.geometries ?? [];
+    if (out.length !== batch.length) throw new ArcGisRequestError(`simplify returned ${out.length} geometries for ${batch.length}.`, url);
+    out.forEach((g) => results.push({ rings: g.rings ?? [], spatialReference: sr }));
+  }
+  return results;
+}

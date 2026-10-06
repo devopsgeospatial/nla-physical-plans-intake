@@ -79,12 +79,23 @@ describe("parseUploadFile: GeoJSON", () => {
     assert.ok(Math.abs(parsed.bbox[0] - 29.765) < 1e-5 && Math.abs(parsed.bbox[1] + 2.09) < 1e-5, `bbox ${parsed.bbox}`);
   });
 
-  it("names the feature that is invalid", async () => {
+  it("flags self-intersecting polygons for repair instead of rejecting the upload", async () => {
     const bowtie = [[29.765, -2.09], [29.767, -2.088], [29.767, -2.09], [29.765, -2.088], [29.765, -2.09]];
-    await rejects(
-      parseUploadFile("bad.geojson", enc({ type: "FeatureCollection", features: [feature([square]), feature([bowtie])] })),
-      /Feature 2 is self-intersecting/,
+    const parsed = await parseUploadFile("plan.geojson", enc({ type: "FeatureCollection", features: [feature([square]), feature([bowtie])] }));
+    assert.equal(parsed.features.length, 2);
+    assert.equal(parsed.repairCount, 1);
+    assert.equal(parsed.features[0]!.selfIntersection, undefined);
+    const [lon, lat] = parsed.features[1]!.selfIntersection!;
+    assert.ok(Math.abs(lon - 29.766) < 1e-9 && Math.abs(lat + 2.089) < 1e-9, `kink at ${lon}, ${lat}`);
+  });
+
+  it("accepts large files (thousands of parcels)", async () => {
+    const many = Array.from({ length: 2_500 }, (_, i) =>
+      feature([square.map(([x, y]) => [x! + (i % 50) * 0.003, y! - Math.floor(i / 50) * 0.003])], { parcel_upi: `P${i}` }),
     );
+    const parsed = await parseUploadFile("big.geojson", enc({ type: "FeatureCollection", features: many }));
+    assert.equal(parsed.features.length, 2_500);
+    assert.equal(parsed.repairCount, 0);
   });
 
   it("rejects projected coordinates, unsupported crs, non-polygons, degenerate rings and bad files", async () => {

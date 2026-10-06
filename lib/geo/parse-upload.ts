@@ -18,6 +18,11 @@ export interface UploadFeature {
   vertexCount: number;
   /** Geodesic area, used for the preview only (the stored area is computed in the layer grid). */
   areaSqMeters: number;
+  /**
+   * First self-intersection point [lon, lat] when the polygon is not topologically simple. Such
+   * polygons are repaired on submit by the ArcGIS geometry service (simplify), not rejected.
+   */
+  selfIntersection?: [number, number];
 }
 
 export interface ParsedUpload {
@@ -28,6 +33,8 @@ export interface ParsedUpload {
   vertexCount: number;
   bbox: [minLon: number, minLat: number, maxLon: number, maxLat: number];
   warnings: string[];
+  /** Number of features that need geometry repair (see UploadFeature.selfIntersection). */
+  repairCount: number;
 }
 
 export class UploadValidationError extends Error {
@@ -37,8 +44,8 @@ export class UploadValidationError extends Error {
   }
 }
 
-export const MAX_FEATURES = 2_000;
-export const MAX_VERTICES = 200_000;
+export const MAX_FEATURES = 10_000;
+export const MAX_VERTICES = 1_000_000;
 
 type Ring = [number, number][];
 type PolygonRings = Ring[];
@@ -86,15 +93,11 @@ export async function parseUploadFile(fileName: string, data: ArrayBuffer): Prom
     const geometry: Polygon | MultiPolygon =
       polygons.length === 1 ? { type: "Polygon", coordinates: polygons[0]! } : { type: "MultiPolygon", coordinates: polygons };
 
-    const intersections = kinks(geometry).features;
-    if (intersections.length > 0) {
-      const [lon, lat] = intersections[0]!.geometry.coordinates;
-      throw new UploadValidationError(
-        `${item.label} is self-intersecting (first near ${lon?.toFixed(6)}, ${lat?.toFixed(6)}). Fix the topology and re-upload.`,
-      );
-    }
+    // Real cadastral data often contains a few self-touching or crossing rings. They are flagged here
+    // and repaired with ArcGIS Simplify on submit, instead of blocking the whole upload.
+    const kink = kinks(geometry).features[0]?.geometry.coordinates as [number, number] | undefined;
     const areaSqMeters = area(geometry);
-    if (!(areaSqMeters > 0)) throw new UploadValidationError(`${item.label} has zero area.`);
+    if (!(areaSqMeters > 0) && !kink) throw new UploadValidationError(`${item.label} has zero area.`);
 
     Object.keys(item.properties).forEach((k) => fieldNames.add(k));
     features.push({
@@ -102,6 +105,7 @@ export async function parseUploadFile(fileName: string, data: ArrayBuffer): Prom
       properties: item.properties,
       vertexCount: polygons.reduce((n, p) => n + p.reduce((m, r) => m + r.length, 0), 0),
       areaSqMeters,
+      ...(kink ? { selfIntersection: kink } : {}),
     });
   }
 
@@ -114,7 +118,8 @@ export async function parseUploadFile(fileName: string, data: ArrayBuffer): Prom
     throw new UploadValidationError(`The file has ${vertexCount.toLocaleString()} vertices; the maximum is ${MAX_VERTICES.toLocaleString()}. Simplify or split it.`);
   }
 
-  return { features, format, fieldNames: [...fieldNames], vertexCount, bbox: computeBbox(features), warnings };
+  const repairCount = features.filter((f) => f.selfIntersection).length;
+  return { features, format, fieldNames: [...fieldNames], vertexCount, bbox: computeBbox(features), warnings, repairCount };
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import "server-only";
 import type { TokenProvider } from "../arcgis/auth";
 import { getArcGisConfig, type ArcGisConfig } from "../arcgis/config";
 import { FeatureLayerClient, FeatureRejectedError, type LayerMetadata } from "../arcgis/feature-layer";
-import { projectPolygon, resolveGeometryServiceUrl } from "../arcgis/geometry-service";
+import { projectPolygon, resolveGeometryServiceUrl, simplifyPolygons } from "../arcgis/geometry-service";
 import {
   geoJsonToEsriPolygon,
   isWebMercator,
@@ -28,6 +28,8 @@ export interface AppendResult {
   layerName: string;
   objectIds: number[];
   attachmentsPerFeature: number;
+  /** Polygons that were self-intersecting and repaired with ArcGIS Simplify before appending. */
+  repairedCount: number;
   matchedFields: { file: string; layer: string }[];
   ignoredFields: string[];
   warnings: string[];
@@ -81,11 +83,30 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
   const areaField = has(AREA_FIELD) && !mapping.matched.some((m) => m.layerField.name.toLowerCase() === AREA_FIELD) ? AREA_FIELD : null;
 
   const layerSr = await layer.getSpatialReference();
+  const features = request.upload.features;
+  // Validate attributes first: a bad value should fail fast, before any geometry service calls.
+  const attributeSets = features.map((feature, index) => buildAttributes(feature, index, mapping));
+
+  const geometries: EsriPolygon[] = [];
+  for (const feature of features) geometries.push(await toLayerGeometry(feature, layerSr, config, tokens));
+
+  const toRepair = features.flatMap((f, i) => (f.selfIntersection ? [i] : []));
+  if (toRepair.length > 0) {
+    const serviceUrl = await resolveGeometryServiceUrl(config.portalUrl, config.geometryServiceUrl, tokens);
+    const repaired = await simplifyPolygons(serviceUrl, toRepair.map((i) => geometries[i]!), layerSr, tokens);
+    toRepair.forEach((featureIndex, k) => {
+      if (repaired[k]!.rings.length === 0) {
+        throw new AttributeError(`Feature ${featureIndex + 1} has no area left after repairing its self-intersections. Fix it in the source data.`);
+      }
+      geometries[featureIndex] = repaired[k]!;
+    });
+  }
+
   const now = Date.now();
   const adds: { geometry: EsriPolygon; attributes: Record<string, AttributeValue> }[] = [];
-  for (const [index, feature] of request.upload.features.entries()) {
-    const geometry = await toLayerGeometry(feature, layerSr, config, tokens);
-    const attributes = buildAttributes(feature, index, mapping);
+  for (const [index, feature] of features.entries()) {
+    const geometry = geometries[index]!;
+    const attributes = attributeSets[index]!;
     if (areaField) attributes[areaField] = round2(storedArea(feature, geometry, layerSr));
     if (has(AUTO_FIELDS.createdUser)) attributes[AUTO_FIELDS.createdUser] = request.username;
     if (has(AUTO_FIELDS.createdDate)) attributes[AUTO_FIELDS.createdDate] = now;
@@ -132,6 +153,7 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
     layerName: meta.name,
     objectIds,
     attachmentsPerFeature: request.documents.length,
+    repairedCount: toRepair.length,
     matchedFields: mapping.matched.map((m) => ({ file: m.fileField, layer: m.layerField.name })),
     ignoredFields: mapping.ignored,
     warnings: request.upload.warnings,
