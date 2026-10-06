@@ -20,8 +20,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ a
 
   const session = readSession((await cookies()).get(SESSION_COOKIE)?.value, config.sessionSecret);
   const { auth_error: authError, u: lastUsername } = await searchParams;
-  const portalHost = new URL(config.portalUrl).host;
-  if (!session) return <SignIn portalHost={portalHost} authError={authError} username={lastUsername} />;
+  if (!session) return <SignIn authError={authError} username={lastUsername} />;
 
   // Read the target layer as the signed-in user: its fields drive the attribute matching preview.
   let layer: LayerSummary;
@@ -58,7 +57,6 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ a
     <UploadWorkspace
       layer={layer}
       user={{ fullName: session.fullName, username: session.username }}
-      portalHost={portalHost}
       maxRequestBytes={getUploadLimits().maxRequestBytes}
     />
   );
@@ -76,7 +74,6 @@ function HubScreen({ children }: { children: ReactNode }) {
       <div className="flex flex-1 items-start justify-center px-4 py-12 sm:items-center sm:py-16">
         <section className="w-full max-w-[460px] bg-[rgb(90_90_90/0.4)] px-7 py-9 sm:px-9">{children}</section>
       </div>
-      <footer className="px-6 py-5 text-center text-[13px] text-silver/60 sm:px-10">National Land Authority · Republic of Rwanda</footer>
     </main>
   );
 }
@@ -84,13 +81,13 @@ function HubScreen({ children }: { children: ReactNode }) {
 const inputClass =
   "h-11 w-full rounded-none border border-[#bdbdbd] bg-white px-3 text-[15px] text-ink outline-none transition focus:border-nla focus:shadow-[0_0_0_1px_var(--color-nla)]";
 
-function SignIn({ portalHost, authError, username }: { portalHost: string; authError?: string; username?: string }) {
+function SignIn({ authError, username }: { authError?: string; username?: string }) {
   return (
     <HubScreen>
       <h1 className="text-center text-[20px] font-normal text-white">
         Sign in to <span className="font-semibold">Physical Plan Submission</span>
       </h1>
-      <p className="mt-3 text-center text-[14px] leading-6 text-silver">Use your ArcGIS Online account on {portalHost}.</p>
+      <p className="mt-3 text-center text-[14px] leading-6 text-silver">Use your ArcGIS Online account.</p>
 
       {authError && (
         <p className="mt-6 border-l-2 border-[#ff6b6b] bg-black/30 px-3 py-2 text-[14px] leading-6 text-[#ffc4c4]" role="alert">
@@ -129,9 +126,6 @@ function SignIn({ portalHost, authError, username }: { portalHost: string; authE
         <a href="/api/auth/login" className="text-nla-light underline underline-offset-2 hover:text-white">
           Continue with ArcGIS
         </a>
-      </p>
-      <p className="mt-6 border-t border-white/10 pt-5 text-center text-[12px] leading-5 text-silver/60">
-        Your password is sent to ArcGIS Online once to sign you in. It is not stored.
       </p>
     </HubScreen>
   );

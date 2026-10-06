@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Feature, FeatureCollection } from "geojson";
-import type { GeoJSON as LeafletGeoJSON, Layer, LayerGroup, Map as LeafletMap, Path, TileLayer } from "leaflet";
+import type { GeoJSON as LeafletGeoJSON, ImageOverlay, Layer, LayerGroup, Map as LeafletMap, Path } from "leaflet";
 import type { UploadFeature } from "@/lib/geo/parse-upload";
 
 interface Props {
@@ -18,24 +18,15 @@ interface Props {
 }
 
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
-const BASEMAPS = {
-  imagery: {
-    label: "Imagery",
-    layers: [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`, `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`],
-    attribution: "Esri, Maxar, Earthstar Geographics",
-  },
-  streets: {
-    label: "Streets",
-    layers: [`${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`],
-    attribution: "Esri, HERE, Garmin, OpenStreetMap contributors",
-  },
-  dark: {
-    label: "Dark",
-    layers: [`${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, `${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`],
-    attribution: "Esri, HERE, Garmin",
-  },
-} as const;
-type BasemapKey = keyof typeof BASEMAPS;
+/** Esri "Imagery Hybrid": imagery with roads, places and administrative boundaries on top. */
+const HYBRID_LAYERS = [
+  `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+  `${ESRI}/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}`,
+  `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
+];
+const HYBRID_ATTRIBUTION = "Esri, Maxar, Earthstar Geographics; districts: NLA Rwanda";
+/** NLA's official district boundaries (Rwanda Spatial Data Hub), drawn on request for the current view. */
+const NLA_DISTRICTS_EXPORT = "https://geodata.rw/server/rest/services/basemap/District_boundary/MapServer/export";
 
 // Hub blue for new parcels, amber for the selected one; skipped duplicates are white outlines only.
 const COLORS = { plan: "#0d73b0", saved: "#2fbf71", repair: "#ff4d4d", skip: "#ffffff" };
@@ -51,9 +42,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   const dataLayerRef = useRef<LeafletGeoJSON | null>(null);
   const kinkLayerRef = useRef<LayerGroup | null>(null);
   const featureLayersRef = useRef<Path[]>([]);
-  const baseLayersRef = useRef<TileLayer[]>([]);
   const propsRef = useRef({ features, labels, appended, onSelect, skipped });
-  const [basemap, setBasemap] = useState<BasemapKey>("imagery");
   const [ready, setReady] = useState(false);
 
   // ---- map lifecycle ---------------------------------------------------------------------------
@@ -80,20 +69,53 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
     };
   }, []);
 
-  // ---- basemap ---------------------------------------------------------------------------------
+  // ---- basemap: Imagery Hybrid + NLA districts ---------------------------------------------------
   useEffect(() => {
     const L = leafletRef.current;
     const map = mapRef.current;
     if (!ready || !L || !map) return;
-    baseLayersRef.current.forEach((l) => l.remove());
-    const def = BASEMAPS[basemap];
-    baseLayersRef.current = def.layers.map((url, i) =>
+    HYBRID_LAYERS.forEach((url, i) =>
       // Skip loading tiles for intermediate zoom levels during fly animations: the final view's imagery arrives sooner.
-      L.tileLayer(url, { maxZoom: 19, updateWhenZooming: false, keepBuffer: 3, attribution: i === 0 ? def.attribution : undefined })
-        .addTo(map)
-        .bringToBack(),
+      // Imagery is real up to level 18 around Rwanda; deeper zooms upscale it instead of showing "Map data not yet available".
+      L.tileLayer(url, {
+        maxZoom: 20,
+        maxNativeZoom: 18,
+        updateWhenZooming: false,
+        keepBuffer: 3,
+        attribution: i === 0 ? HYBRID_ATTRIBUTION : undefined,
+      }).addTo(map),
     );
-  }, [basemap, ready]);
+
+    // Districts sit between the basemap and the parcels, so they never cover a parcel.
+    map.createPane("districts").style.zIndex = "350";
+    map.getPane("districts")!.style.pointerEvents = "none";
+    let overlay: ImageOverlay | null = null;
+    let request = 0;
+    const refresh = () => {
+      const bounds = map.getBounds();
+      const size = map.getSize();
+      const sw = L.CRS.EPSG3857.project(bounds.getSouthWest());
+      const ne = L.CRS.EPSG3857.project(bounds.getNorthEast());
+      const src =
+        `${NLA_DISTRICTS_EXPORT}?bbox=${sw.x},${sw.y},${ne.x},${ne.y}&bboxSR=3857&imageSR=3857` +
+        `&size=${size.x},${size.y}&format=png32&transparent=true&f=image`;
+      const id = ++request;
+      const img = new Image();
+      img.onload = () => {
+        if (id !== request) return; // a newer view replaced this one
+        const next = L.imageOverlay(src, bounds, { pane: "districts", interactive: false }).addTo(map);
+        overlay?.remove();
+        overlay = next;
+      };
+      img.src = src; // failures leave the previous overlay (or none); the map still works
+    };
+    map.on("moveend", refresh);
+    refresh();
+    return () => {
+      map.off("moveend", refresh);
+      overlay?.remove();
+    };
+  }, [ready]);
 
   // ---- data ------------------------------------------------------------------------------------
   propsRef.current = { features, labels, appended, onSelect, skipped };
@@ -176,18 +198,6 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
     <div className="absolute inset-0">
       <div ref={containerRef} className="absolute inset-0" aria-label="Map of the uploaded polygons" />
 
-      <div className="absolute right-3 top-3 z-[1000] flex bg-white text-[13px]">
-        {(Object.keys(BASEMAPS) as BasemapKey[]).map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setBasemap(key)}
-            className={`px-3 py-2 transition ${basemap === key ? "bg-hub text-white" : "text-ink hover:bg-nla-tint"}`}
-          >
-            {BASEMAPS[key].label}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }
@@ -211,9 +221,9 @@ function highlightStyle(state: PolygonState) {
   return { color: "#ffa800", weight: 3, opacity: 1, fillColor: COLORS[state], fillOpacity: state === "skip" ? 0.15 : 0.6, dashArray: undefined };
 }
 
-/** Breathing room around fitted geometry (top leaves space for the basemap switcher). */
+/** Breathing room around fitted geometry. */
 function fitPadding(): { paddingTopLeft: [number, number]; paddingBottomRight: [number, number] } {
-  return { paddingTopLeft: [48, 64], paddingBottomRight: [48, 48] };
+  return { paddingTopLeft: [48, 48], paddingBottomRight: [48, 48] };
 }
 
 function popupHtml(title: string, properties: Record<string, unknown>): string {

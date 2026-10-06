@@ -325,7 +325,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     });
     r = await post({ file: ["long.geojson", "application/geo+json", new Blob([tooLong])] });
     assert.equal(r.status, 422);
-    assert.match(r.body.error, /Feature 2, field "district_1".*allows 50/);
+    assert.match(r.body.error, /Feature 2, field "district_1".*too long \(60\/50/);
 
     r = await post({ file: SHAPEFILE, documents: ["samples/muhanga-parcels-wgs84.geojson", "application/pdf"] });
     assert.equal(r.status, 415);

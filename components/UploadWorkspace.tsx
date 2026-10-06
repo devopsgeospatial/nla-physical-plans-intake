@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { parseUploadFile, UploadValidationError, type ParsedUpload, type UploadFeature } from "@/lib/geo/parse-upload";
-import { AREA_FIELD, AUTO_FIELDS, mapFields, type LayerFieldInfo } from "@/lib/plans/attribute-mapping";
+import { findValueErrors, mapFields, type LayerFieldInfo } from "@/lib/plans/attribute-mapping";
 import { uploadFingerprints, type DuplicateMatch } from "@/lib/plans/duplicates";
 
 const UploadPreviewMap = dynamic(() => import("./UploadPreviewMap"), {
@@ -44,7 +44,7 @@ type DuplicateCheck =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "done"; matches: Map<number, DuplicateMatch> }
-  | { kind: "error"; message: string };
+  | { kind: "error" };
 
 type FileState =
   | { kind: "empty" }
@@ -54,8 +54,8 @@ type FileState =
 
 const LABEL_FIELDS = ["parcel_upi", "plan_id", "name"];
 const NO_DUPLICATES: ReadonlyMap<number, DuplicateMatch> = new Map();
-/** Rows rendered in the polygon list; flagged polygons are always listed first. */
-const MAX_LIST_ROWS = 400;
+/** Errors listed in the panel; the rest are summarised as a count. */
+const MAX_ERRORS_SHOWN = 30;
 
 export function featureLabel(feature: UploadFeature, index: number): string {
   for (const key of LABEL_FIELDS) {
@@ -63,64 +63,59 @@ export function featureLabel(feature: UploadFeature, index: number): string {
     const value = match ? feature.properties[match] : undefined;
     if (value !== undefined && value !== null && String(value).trim()) return String(value);
   }
-  return `Polygon ${index + 1}`;
+  return `Parcel ${index + 1}`;
 }
 
 export default function UploadWorkspace({
   layer,
   user,
-  portalHost,
   maxRequestBytes,
 }: {
   layer: LayerSummary;
   user: { fullName: string; username: string };
-  portalHost: string;
   /** Largest submission the server accepts (file + PDFs), so oversize uploads are caught before sending. */
   maxRequestBytes: number;
 }) {
   const [upload, setUpload] = useState<FileState>({ kind: "empty" });
   const [documents, setDocuments] = useState<File[]>([]);
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
-  const [hovered, setHovered] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [dupCheck, setDupCheck] = useState<DuplicateCheck>({ kind: "idle" });
-  const outcomeRef = useRef<HTMLDivElement>(null);
-
-  // Bring the result (success or error) into view in the scrollable panel.
-  useEffect(() => {
-    if (submit.kind === "success" || submit.kind === "error") outcomeRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }, [submit.kind]);
 
   const parsed = upload.kind === "valid" ? upload.parsed : null;
+  const done = submit.kind === "success";
   const mapping = useMemo(() => (parsed ? mapFields(parsed.fieldNames, layer.fields) : null), [parsed, layer.fields]);
-  const autoFilled = useMemo(() => {
-    const names = new Set(layer.fields.map((f) => f.name.toLowerCase()));
-    const list: string[] = [AUTO_FIELDS.createdUser, AUTO_FIELDS.createdDate].filter((n) => names.has(n));
-    if (names.has(AREA_FIELD) && !mapping?.matched.some((m) => m.layerField.name.toLowerCase() === AREA_FIELD)) list.push(AREA_FIELD);
-    return list;
-  }, [layer.fields, mapping]);
-
-  const total = parsed?.features.length ?? 0;
   const duplicates = useMemo(() => (dupCheck.kind === "done" ? dupCheck.matches : NO_DUPLICATES), [dupCheck]);
   const skipped = useMemo(() => new Set(duplicates.keys()), [duplicates]);
-  const count = total - duplicates.size; // polygons that will actually be appended
-  const inLayerCount = [...duplicates.values()].filter((d) => d.existingObjectId !== undefined).length;
-  const inFileCount = duplicates.size - inLayerCount;
-  // The PDFs go on the first record that will be appended (first non-duplicate in file order).
-  const firstNewIndex = parsed ? parsed.features.findIndex((_, i) => !skipped.has(i)) : -1;
-  const firstNewLabel = parsed && firstNewIndex >= 0 ? `${firstNewIndex + 1} · ${featureLabel(parsed.features[firstNewIndex]!, firstNewIndex)}` : "";
-  const listOrder = useMemo(() => {
-    if (!parsed) return [];
-    const indexes = parsed.features.map((_, i) => i);
-    const rank = (i: number) => (skipped.has(i) ? 2 : parsed.features[i]!.selfIntersection ? 0 : 1); // repairs, new, duplicates
-    return indexes.sort((a, b) => rank(a) - rank(b) || a - b).slice(0, MAX_LIST_ROWS);
-  }, [parsed, skipped]);
-  const totalHa = parsed ? parsed.features.reduce((sum, f, i) => (skipped.has(i) ? sum : sum + f.areaSqMeters), 0) / 10_000 : 0;
-  const done = submit.kind === "success";
-  // Multipart overhead is small; keep a 32 KB margin under the server limit.
+  const valueErrors = useMemo(() => (parsed && mapping ? findValueErrors(parsed.features, mapping, skipped) : []), [parsed, mapping, skipped]);
+
+  const total = parsed?.features.length ?? 0;
+  const count = total - duplicates.size; // parcels that will be appended
+  const hectares = parsed ? parsed.features.reduce((sum, f, i) => (skipped.has(i) ? sum : sum + f.areaSqMeters), 0) / 10_000 : 0;
   const totalBytes = (upload.kind === "valid" ? upload.file.size : 0) + documents.reduce((n, d) => n + d.size, 0);
-  const tooLarge = totalBytes + 32 * 1024 > maxRequestBytes;
-  const canSubmit = !!parsed && count > 0 && dupCheck.kind !== "checking" && !tooLarge && submit.kind !== "submitting" && !done;
+  const tooLarge = totalBytes + 32 * 1024 > maxRequestBytes; // small margin for multipart overhead
+  const nothingNew = dupCheck.kind === "done" && total > 0 && count === 0;
+  const canSubmit =
+    !!parsed && count > 0 && valueErrors.length === 0 && !tooLarge && dupCheck.kind !== "checking" && submit.kind !== "submitting" && !done;
+
+  // Unsent work is easy to lose (a stray drop, a closed tab): ask before leaving, and never let a
+  // file dropped outside a drop zone replace the app with the browser's own file viewer.
+  useEffect(() => {
+    const block = (e: globalThis.DragEvent) => e.preventDefault();
+    window.addEventListener("dragover", block);
+    window.addEventListener("drop", block);
+    return () => {
+      window.removeEventListener("dragover", block);
+      window.removeEventListener("drop", block);
+    };
+  }, []);
+  const hasUnsentWork = (upload.kind === "valid" || documents.length > 0) && !done;
+  useEffect(() => {
+    if (!hasUnsentWork) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsentWork]);
 
   const loadFile = useCallback(async (file: File) => {
     setSubmit({ kind: "idle" });
@@ -138,21 +133,20 @@ export default function UploadWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Asks the server which polygons already exist in the layer (the append re-checks authoritatively). */
+  /** Asks the server which parcels already exist in the layer (the append re-checks authoritatively). */
   async function checkDuplicates(result: ParsedUpload) {
     setDupCheck({ kind: "checking" });
     try {
-      const items = uploadFingerprints(result.features, result.fieldNames, layer.fields);
       const response = await fetch("/api/plans/duplicates", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items: uploadFingerprints(result.features, result.fieldNames, layer.fields) }),
       });
-      const json = (await response.json().catch(() => null)) as { ok: boolean; duplicates?: DuplicateMatch[]; error?: string } | null;
-      if (!json?.ok || !json.duplicates) throw new Error(json?.error ?? `HTTP ${response.status}`);
+      const json = (await response.json().catch(() => null)) as { ok: boolean; duplicates?: DuplicateMatch[] } | null;
+      if (!json?.ok || !json.duplicates) throw new Error();
       setDupCheck({ kind: "done", matches: new Map(json.duplicates.map((d) => [d.index, d])) });
-    } catch (err) {
-      setDupCheck({ kind: "error", message: (err as Error).message });
+    } catch {
+      setDupCheck({ kind: "error" }); // the append still skips duplicates server-side
     }
   }
 
@@ -166,13 +160,9 @@ export default function UploadWorkspace({
       const response = await fetch("/api/plans/submit", { method: "POST", body });
       const json = (await response.json().catch(() => null)) as AppendSuccess | AppendFailure | null;
       if (!json) {
-        const error =
-          response.status === 413
-            ? `The upload is larger than the server accepts (${formatSize(maxRequestBytes)}). Remove or compress PDFs and try again.`
-            : `Server returned HTTP ${response.status}.`;
+        const error = response.status === 413 ? `Too large. The maximum is ${formatSize(maxRequestBytes)}.` : `Server error (HTTP ${response.status}).`;
         setSubmit({ kind: "error", failure: { ok: false, error } });
-      }
-      else if (json.ok) setSubmit({ kind: "success", result: json });
+      } else if (json.ok) setSubmit({ kind: "success", result: json });
       else setSubmit({ kind: "error", failure: json });
     } catch (err) {
       setSubmit({ kind: "error", failure: { ok: false, error: `Network error: ${(err as Error).message}` } });
@@ -187,35 +177,24 @@ export default function UploadWorkspace({
     setSelected(null);
   }
 
-  const statusLine =
-    dupCheck.kind === "checking"
-      ? `Checking ${layer.name} for parcels that already exist…`
-      : dupCheck.kind === "done" && duplicates.size > 0
-        ? `${duplicates.size.toLocaleString()} duplicate${duplicates.size === 1 ? "" : "s"} will be skipped: ${[
-            inLayerCount > 0 ? `${inLayerCount.toLocaleString()} already in ${layer.name}` : "",
-            inFileCount > 0 ? `${inFileCount.toLocaleString()} repeated in this file` : "",
-          ]
-            .filter(Boolean)
-            .join(", ")}.`
-        : null;
+  // Everything the user must fix before submitting, in one list.
+  const blocking: { key: string; text: string; index?: number }[] = [];
+  if (upload.kind === "invalid") blocking.push({ key: "file", text: upload.message });
+  if (nothingNew) blocking.push({ key: "none", text: "All parcels in this file are already in the layer." });
+  if (tooLarge && !done) blocking.push({ key: "size", text: `Files too large: ${formatSize(totalBytes)} (max ${formatSize(maxRequestBytes)}).` });
+  for (const e of valueErrors.slice(0, MAX_ERRORS_SHOWN)) {
+    blocking.push({ key: `${e.index}-${e.field}`, index: e.index, text: `${parsed ? featureLabel(parsed.features[e.index]!, e.index) : ""} · ${e.field} ${e.message}` });
+  }
+  if (submit.kind === "error") blocking.push({ key: "submit", text: submit.failure.error });
 
   return (
     <div className="flex h-dvh flex-col bg-night">
-      {/* Header */}
-      <header className="relative z-[1001] flex h-16 shrink-0 items-center justify-between gap-4 bg-hub px-5 text-white sm:px-8">
-        <div className="flex min-w-0 items-baseline gap-5">
-          <h1 className="truncate text-[17px] font-normal">Physical Plan Submission</h1>
-          <span className="hidden truncate text-[14px] text-white/55 md:inline">
-            {layer.name} · {portalHost}
-          </span>
-        </div>
-        <div className="flex items-center gap-5">
-          <p className="hidden text-right text-[14px] leading-tight sm:block">
-            <span className="block text-white">{user.fullName}</span>
-            <span className="block text-[12px] text-white/55">{user.username}</span>
-          </p>
+      <header className="relative z-[1001] flex h-14 shrink-0 items-center justify-between gap-4 bg-hub px-5 text-white">
+        <h1 className="truncate text-[17px]">Physical Plan Submission</h1>
+        <div className="flex items-center gap-4">
+          <span className="hidden text-[14px] sm:inline">{user.fullName}</span>
           <form action="/api/auth/logout" method="post">
-            <button type="submit" className="h-9 rounded-none border border-white/45 px-4 text-[14px] text-white transition hover:bg-white/10">
+            <button type="submit" className="h-8 border border-white/45 px-3.5 text-[13px] transition hover:bg-white/10">
               Sign out
             </button>
           </form>
@@ -223,9 +202,8 @@ export default function UploadWorkspace({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
-        {/* Panel */}
-        <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col bg-paper lg:w-[480px] lg:flex-none">
-          <div className="scroll-slim flex-1 overflow-y-auto">
+        <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col bg-paper lg:w-[360px] lg:flex-none">
+          <div className="scroll-slim flex-1 space-y-6 overflow-y-auto p-5">
             <Section n={1} title="Plan file">
               {upload.kind === "valid" ? (
                 <FileRow name={upload.file.name} size={upload.file.size} onRemove={done ? undefined : reset} />
@@ -233,221 +211,91 @@ export default function UploadWorkspace({
                 <DropZone
                   accept=".zip,.geojson,.json"
                   onFiles={(files) => files[0] && loadFile(files[0])}
-                  title={upload.kind === "reading" ? `Reading ${upload.name}…` : "Drop a zipped Shapefile or GeoJSON here"}
-                  hint="The .zip must contain the .shp, .shx, .dbf and .prj files."
-                  inputId="file"
+                  label={upload.kind === "reading" ? "Reading…" : "Drop plan file"}
+                  hint=".zip or .geojson"
                 />
               )}
-              {upload.kind === "invalid" && (
-                <Remark tone="alert" title={`${upload.name} can't be used`}>
-                  {upload.message}
-                </Remark>
-              )}
             </Section>
 
-            {parsed && mapping && (
-              <div className="fade-in">
-                <div className="grid grid-cols-3 divide-x divide-hairline border-b border-hairline">
-                  <Figure value={dupCheck.kind === "checking" ? "–" : count.toLocaleString()} label={`new record${count === 1 ? "" : "s"}`} accent />
-                  <Figure value={totalHa >= 100 ? totalHa.toFixed(0) : totalHa.toFixed(2)} label="hectares" />
-                  <Figure value={parsed.vertexCount.toLocaleString()} label="vertices" />
-                </div>
-
-                <div className="space-y-4 border-b border-hairline px-6 py-5">
-                  {statusLine && <Remark tone={dupCheck.kind === "checking" ? "info" : "muted"}>{statusLine}</Remark>}
-                  {dupCheck.kind === "done" && count === 0 && (
-                    <Remark tone="warn" title="Nothing new in this file">
-                      Every polygon is already in {layer.name}.
-                    </Remark>
-                  )}
-                  {dupCheck.kind === "error" && (
-                    <Remark tone="warn" title="Duplicates could not be checked yet">
-                      {dupCheck.message}. They are still detected and skipped when you submit.
-                    </Remark>
-                  )}
-                  {parsed.repairCount > 0 && (
-                    <Remark tone="alert" title={`${parsed.repairCount} polygon${parsed.repairCount === 1 ? "" : "s"} cross${parsed.repairCount === 1 ? "es" : ""} itself`}>
-                      Marked in red on the map. ArcGIS repairs {parsed.repairCount === 1 ? "it" : "them"} before appending.
-                    </Remark>
-                  )}
-                  {parsed.warnings.map((w) => (
-                    <Remark key={w} tone="muted">
-                      {w}
-                    </Remark>
-                  ))}
-
-                  <dl className="space-y-3 text-[14px] leading-6">
-                    <FieldLine label={`Copied from the file (${mapping.matched.length})`}>
-                      {mapping.matched.length > 0 ? mapping.matched.map((m) => m.layerField.name).join(", ") : <span className="text-warn">None of the file&apos;s fields match the layer.</span>}
-                    </FieldLine>
-                    {autoFilled.length > 0 && <FieldLine label="Filled in by the app">{autoFilled.join(", ")}</FieldLine>}
-                    {mapping.ignored.length > 0 && (
-                      <FieldLine label="Not in the layer, ignored">
-                        <span className="text-graphite line-through decoration-graphite/40">{mapping.ignored.join(", ")}</span>
-                      </FieldLine>
-                    )}
-                  </dl>
-                </div>
-
-                <table className="w-full border-b border-hairline text-left text-[14px]">
-                  <thead>
-                    <tr className="border-b border-hairline text-[12px] text-graphite">
-                      <th className="w-12 py-2.5 pl-6 font-semibold">#</th>
-                      <th className="py-2.5 font-semibold">Parcel</th>
-                      <th className="py-2.5 pr-6 text-right font-semibold">Area</th>
-                    </tr>
-                  </thead>
-                  <tbody onMouseLeave={() => setHovered(null)}>
-                    {listOrder.map((i) => {
-                      const f = parsed.features[i]!;
-                      const dup = duplicates.get(i);
-                      return (
-                        <tr
-                          key={i}
-                          onMouseEnter={() => setHovered(i)}
-                          onClick={() => setSelected(i)}
-                          className={`cursor-pointer border-b border-hairline/70 transition last:border-0 ${
-                            selected === i ? "bg-nla-tint" : "hover:bg-mist"
-                          } ${dup ? "text-graphite" : "text-ink"}`}
-                        >
-                          <td className="py-2.5 pl-6 tabular-nums text-graphite">{i + 1}</td>
-                          <td className="max-w-0 py-2.5 pr-3">
-                            <span className="block truncate">
-                              {featureLabel(f, i)}
-                              {i === firstNewIndex && documents.length > 0 && <span className="ml-2 text-[12px] text-nla">+ PDF</span>}
-                            </span>
-                            {dup && (
-                              <span className="block text-[12px]">
-                                {dup.existingObjectId !== undefined
-                                  ? `Already in the layer (OBJECTID ${dup.existingObjectId}), skipped`
-                                  : `Repeat of #${dup.sameFileAs! + 1}, skipped`}
-                              </span>
-                            )}
-                            {!dup && f.selfIntersection && <span className="block text-[12px] text-alert">Crosses itself, repaired on submit</span>}
-                          </td>
-                          <td className="whitespace-nowrap py-2.5 pr-6 text-right tabular-nums">
-                            {/* A self-crossing shape has no meaningful area until ArcGIS repairs it. */}
-                            {f.selfIntersection ? "–" : formatArea(f.areaSqMeters)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {total > listOrder.length && (
-                  <p className="border-b border-hairline px-6 py-3 text-[13px] text-graphite">
-                    {(total - listOrder.length).toLocaleString()} more parcels are shown on the map.
-                  </p>
-                )}
+            {parsed && (
+              <div className="fade-in grid grid-cols-2 bg-hub text-white">
+                <Indicator
+                  value={dupCheck.kind === "checking" ? "…" : count.toLocaleString()}
+                  label={duplicates.size > 0 ? `parcels (of ${total.toLocaleString()})` : "parcels"}
+                />
+                <Indicator value={hectares >= 100 ? hectares.toFixed(0) : hectares.toFixed(2)} label="hectares" divider />
               </div>
             )}
 
-            <Section n={2} title="Attachments" note="optional">
-              {!layer.hasAttachments ? (
-                <p className="text-[14px] leading-6 text-graphite">
-                  Attachments are turned off on {layer.name}. The layer owner can turn them on in the item settings.
-                </p>
-              ) : (
+            {blocking.length > 0 && (
+              <ul className="fade-in space-y-1.5" role="alert">
+                {blocking.map((b) => (
+                  <li key={b.key}>
+                    <button
+                      type="button"
+                      disabled={b.index === undefined}
+                      onClick={() => b.index !== undefined && setSelected(b.index)}
+                      className="w-full border-l-[3px] border-alert bg-[#fdf1f1] px-3 py-2 text-left text-[13px] leading-5 text-[#7a1c1c] enabled:hover:bg-[#fbe4e4]"
+                    >
+                      {b.text}
+                    </button>
+                  </li>
+                ))}
+                {valueErrors.length > MAX_ERRORS_SHOWN && (
+                  <li className="px-3 text-[13px] text-alert">+ {valueErrors.length - MAX_ERRORS_SHOWN} more</li>
+                )}
+              </ul>
+            )}
+
+            <Section n={2} title="Attachments">
+              {layer.hasAttachments ? (
                 <>
-                  <DropZone
-                    accept=".pdf,application/pdf"
-                    multiple
-                    disabled={done}
-                    onFiles={(files) => setDocuments((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name && p.size === f.size))])}
-                    title="Drop PDF documents here"
-                    hint={count > 1 ? `Attached to the first new record (#${firstNewIndex + 1}) only.` : "PDF only."}
-                    inputId="documents"
-                  />
+                  {!done && (
+                    <DropZone accept=".pdf,application/pdf" multiple onFiles={(files) => setDocuments((prev) => addUnique(prev, files))} label="Drop PDF" hint="optional" />
+                  )}
                   {documents.map((d) => (
-                    <FileRow
-                      key={`${d.name}-${d.size}`}
-                      name={d.name}
-                      size={d.size}
-                      onRemove={done ? undefined : () => setDocuments((prev) => prev.filter((p) => p !== d))}
-                    />
+                    <FileRow key={`${d.name}-${d.size}`} name={d.name} size={d.size} onRemove={done ? undefined : () => setDocuments((prev) => prev.filter((p) => p !== d))} />
                   ))}
                 </>
+              ) : (
+                <p className="text-[13px] text-graphite">Turned off on this layer.</p>
               )}
             </Section>
 
-            {tooLarge && !done && (
-              <div className="px-6 pt-5">
-                <Remark tone="warn" title={`This upload is ${formatSize(totalBytes)}`}>
-                  One submission can be at most {formatSize(maxRequestBytes)}, plan file and PDFs together. Remove or compress some PDFs.
-                </Remark>
+            {submit.kind === "success" && (
+              <div className="fade-in border-l-[3px] border-ok bg-[#eef7f1] px-3 py-3" role="status">
+                <p className="text-[15px] text-ink">
+                  {submit.result.objectIds.length.toLocaleString()} parcel{submit.result.objectIds.length === 1 ? "" : "s"} added
+                </p>
+                <p className="mt-0.5 text-[12px] text-graphite">OBJECTID {formatIdRange(submit.result.objectIds)}</p>
               </div>
             )}
-
-            <div ref={outcomeRef} className="scroll-mb-6 px-6 py-6">
-              {submit.kind === "success" && (
-                <div className="fade-in border-l-4 border-ok pl-4" role="status">
-                  <p className="text-[20px] font-normal leading-snug text-ink">
-                    {submit.result.objectIds.length.toLocaleString()} record{submit.result.objectIds.length === 1 ? "" : "s"} appended to {submit.result.layerName}.
-                  </p>
-                  <p className="mt-2 text-[14px] leading-6 text-graphite">
-                    {[
-                      submit.result.duplicates.length > 0 &&
-                        `${submit.result.duplicates.length} duplicate${submit.result.duplicates.length === 1 ? "" : "s"} skipped`,
-                      submit.result.repairedCount > 0 && `${submit.result.repairedCount} repaired`,
-                      submit.result.attachments &&
-                        `${submit.result.attachments.count} PDF${submit.result.attachments.count === 1 ? "" : "s"} attached to OBJECTID ${submit.result.attachments.objectId}`,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ") || "No duplicates, nothing to repair."}
-                  </p>
-                  <p className="mt-1 text-[13px] text-graphite">OBJECTID {formatIdRange(submit.result.objectIds)}</p>
-                </div>
-              )}
-              {submit.kind === "error" && (
-                <Remark tone="alert" title="Nothing was appended">
-                  {submit.failure.error}
-                  {submit.failure.signInRequired && (
-                    <a href="/" className="ml-1 underline underline-offset-2">
-                      Sign in again
-                    </a>
-                  )}
-                  {submit.failure.requestId && <span className="mt-1 block text-[12px] text-graphite">Reference {submit.failure.requestId}</span>}
-                </Remark>
-              )}
-            </div>
           </div>
 
-          {/* Action */}
-          <div className="relative border-t border-hairline bg-paper px-6 py-4">
+          <div className="relative border-t border-hairline p-5">
             {submit.kind === "submitting" && <span className="progress-bar absolute inset-x-0 top-0 h-0.5 overflow-hidden" aria-hidden />}
             {done ? (
-              <button
-                type="button"
-                onClick={reset}
-                className="h-12 w-full rounded-none border border-nla text-[16px] text-nla transition hover:bg-nla hover:text-white"
-              >
-                Upload another plan
+              <button type="button" onClick={reset} className="h-11 w-full border border-nla text-[15px] text-nla transition hover:bg-nla hover:text-white">
+                New upload
               </button>
             ) : (
               <button
                 type="button"
                 onClick={onSubmit}
                 disabled={!canSubmit}
-                className="h-12 w-full rounded-none bg-nla text-[16px] text-white transition hover:bg-[#0b6299] disabled:cursor-not-allowed disabled:bg-[#cfcfcf]"
+                className="h-11 w-full bg-nla text-[15px] text-white transition hover:bg-[#0b6299] disabled:cursor-not-allowed disabled:bg-[#cfcfcf]"
               >
-                {submit.kind === "submitting"
-                  ? "Appending…"
-                  : dupCheck.kind === "checking"
-                    ? "Checking for duplicates…"
-                    : parsed && count > 0
-                      ? `Submit ${count.toLocaleString()} new record${count === 1 ? "" : "s"}`
-                      : "Submit"}
+                {submit.kind === "submitting" ? "Submitting…" : dupCheck.kind === "checking" ? "Checking…" : "Submit"}
               </button>
             )}
           </div>
         </aside>
 
-        {/* Map */}
-        <div className="relative h-[42dvh] shrink-0 lg:h-auto lg:flex-1">
+        <div className="relative h-[45dvh] shrink-0 lg:h-auto lg:flex-1">
           <UploadPreviewMap
             features={parsed?.features ?? null}
             labels={parsed?.features.map(featureLabel) ?? []}
-            hovered={hovered}
+            hovered={null}
             selected={selected}
             onSelect={setSelected}
             appended={done}
@@ -461,131 +309,104 @@ export default function UploadWorkspace({
 
 // ---------------------------------------------------------------------------------------------------
 
-function Section({ n, title, note, children }: { n: number; title: string; note?: string; children: ReactNode }) {
+function Section({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
-    <section className="space-y-4 border-b border-hairline px-6 py-6">
-      <h2 className="flex items-baseline gap-3 text-[19px] font-normal text-ink">
-        <span className="text-[19px] tabular-nums text-nla">{n}.</span>
+    <section className="space-y-3">
+      <h2 className="text-[16px] text-ink">
+        <span className="mr-2 text-nla">{n}.</span>
         {title}
-        {note && <span className="text-[13px] font-normal text-graphite">{note}</span>}
       </h2>
       {children}
     </section>
   );
 }
 
-function DropZone(props: {
-  accept: string;
-  multiple?: boolean;
-  disabled?: boolean;
-  onFiles: (files: File[]) => void;
-  title: string;
-  hint: string;
-  inputId: string;
-}) {
+/**
+ * Drop target plus an explicit "browse" button that opens a hidden file input. The input lives
+ * outside any <label> so clicking can never trigger two dialogs or move focus elsewhere.
+ */
+function DropZone(props: { accept: string; multiple?: boolean; onFiles: (files: File[]) => void; label: string; hint: string }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setOver(false);
-    if (!props.disabled) props.onFiles(Array.from(e.dataTransfer.files));
+    props.onFiles(Array.from(e.dataTransfer.files));
   };
   return (
-    <label
-      htmlFor={props.inputId}
+    <div
       onDragOver={(e) => {
         e.preventDefault();
         setOver(true);
       }}
       onDragLeave={() => setOver(false)}
       onDrop={onDrop}
-      className={`block cursor-pointer border border-dashed px-5 py-6 transition ${
-        over ? "border-nla bg-nla-tint" : "border-[#bdbdbd] bg-mist hover:border-nla"
-      } ${props.disabled ? "pointer-events-none opacity-40" : ""}`}
+      className={`flex items-center justify-between gap-3 border border-dashed px-4 py-4 transition ${
+        over ? "border-nla bg-nla-tint" : "border-[#bdbdbd] bg-mist"
+      }`}
     >
-      <span className="block text-[15px] text-ink">{props.title}</span>
-      <span className="mt-1 block text-[13px] text-graphite">
-        or <span className="text-nla underline underline-offset-2">browse your files</span>. {props.hint}
+      <span className="min-w-0">
+        <span className="block text-[14px] text-ink">{props.label}</span>
+        <span className="block text-[12px] text-graphite">{props.hint}</span>
       </span>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        className="h-8 shrink-0 border border-nla px-3 text-[13px] text-nla transition hover:bg-nla hover:text-white"
+      >
+        Browse
+      </button>
       <input
         ref={inputRef}
-        id={props.inputId}
         type="file"
         accept={props.accept}
         multiple={props.multiple}
-        disabled={props.disabled}
-        className="sr-only"
+        hidden
         onChange={(e) => {
           props.onFiles(Array.from(e.target.files ?? []));
-          if (inputRef.current) inputRef.current.value = "";
+          e.target.value = "";
         }}
       />
-    </label>
+    </div>
   );
 }
 
 function FileRow({ name, size, onRemove }: { name: string; size: number; onRemove?: () => void }) {
   return (
-    <div className="fade-in flex items-baseline justify-between gap-4 border-b border-hairline pb-3">
+    <div className="fade-in flex items-center justify-between gap-3 bg-mist px-3 py-2.5">
       <span className="min-w-0">
-        <span className="block truncate text-[15px] text-ink">{name}</span>
-        <span className="block text-[13px] text-graphite">{formatSize(size)}</span>
+        <span className="block truncate text-[14px] text-ink">{name}</span>
+        <span className="block text-[12px] text-graphite">{formatSize(size)}</span>
       </span>
       {onRemove && (
-        <button type="button" onClick={onRemove} className="shrink-0 text-[13px] text-graphite underline underline-offset-2 hover:text-alert">
-          Remove
+        <button type="button" onClick={onRemove} aria-label={`Remove ${name}`} className="grid size-7 shrink-0 place-items-center text-[18px] leading-none text-graphite hover:text-alert">
+          ×
         </button>
       )}
     </div>
   );
 }
 
-function Figure({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
+function Indicator({ value, label, divider }: { value: string; label: string; divider?: boolean }) {
   return (
-    <div className="px-6 py-5">
-      <p className={`text-[34px] font-normal leading-none tabular-nums ${accent ? "text-nla" : "text-ink"}`}>{value}</p>
-      <p className="mt-2 text-[13px] text-graphite">{label}</p>
+    <div className={`px-5 py-5 ${divider ? "border-l border-white/15" : ""}`}>
+      <p className="text-[36px] leading-none tabular-nums">{value}</p>
+      <p className="mt-2 text-[12px] text-white/65">{label}</p>
     </div>
   );
 }
 
-function FieldLine({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <dt className="text-[12px] text-graphite">{label}</dt>
-      <dd className="text-ink">{children}</dd>
-    </div>
-  );
+function addUnique(existing: File[], added: File[]): File[] {
+  return [...existing, ...added.filter((f) => !existing.some((p) => p.name === f.name && p.size === f.size))];
 }
 
-const REMARK_TONES = {
-  info: "border-nla text-ink",
-  muted: "border-[#bdbdbd] text-[#3d3d3d]",
-  warn: "border-warn text-ink",
-  alert: "border-alert text-ink",
-} as const;
-
-function Remark({ tone, title, children }: { tone: keyof typeof REMARK_TONES; title?: string; children: ReactNode }) {
-  return (
-    <div className={`fade-in border-l-2 pl-3 text-[14px] leading-6 ${REMARK_TONES[tone]}`} role={tone === "alert" ? "alert" : undefined}>
-      {title && <p className="font-semibold">{title}</p>}
-      <div className={title ? "text-[#3d3d3d]" : ""}>{children}</div>
-    </div>
-  );
-}
-
-/** "1, 2, 3" for a few IDs; "1001–3212 (2,212)" for long consecutive runs. */
+/** "1, 2, 3" for a few IDs; "1001–3212" for long consecutive runs. */
 function formatIdRange(ids: number[]): string {
-  if (ids.length <= 12) return ids.join(", ");
+  if (ids.length <= 6) return ids.join(", ");
   const sorted = [...ids].sort((a, b) => a - b);
   const consecutive = sorted.every((id, i) => i === 0 || id === sorted[i - 1]! + 1);
-  return consecutive
-    ? `${sorted[0]}–${sorted[sorted.length - 1]} (${ids.length.toLocaleString()})`
-    : `${sorted.slice(0, 10).join(", ")} … +${(ids.length - 10).toLocaleString()} more`;
-}
-
-function formatArea(m2: number): string {
-  return m2 >= 10_000 ? `${(m2 / 10_000).toFixed(2)} ha` : `${Math.round(m2).toLocaleString()} m²`;
+  return consecutive ? `${sorted[0]}–${sorted[sorted.length - 1]}` : `${sorted.slice(0, 5).join(", ")} …`;
 }
 
 function formatSize(bytes: number): string {

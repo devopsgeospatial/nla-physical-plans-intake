@@ -79,6 +79,36 @@ export function mapFields(fileFields: string[], layerFields: LayerFieldInfo[]): 
   return mapping;
 }
 
+export interface ValueError {
+  /** Index of the polygon in the upload. */
+  index: number;
+  field: string;
+  message: string;
+}
+
+/**
+ * Every value in the upload that the layer cannot store, checked before submitting so the user can
+ * fix the file first. `skip` holds polygons that will not be appended (duplicates).
+ */
+export function findValueErrors(
+  features: { properties: Record<string, unknown> }[],
+  mapping: FieldMapping,
+  skip: ReadonlySet<number> = new Set(),
+): ValueError[] {
+  const errors: ValueError[] = [];
+  features.forEach((feature, index) => {
+    if (skip.has(index)) return;
+    for (const { fileField, layerField } of mapping.matched) {
+      try {
+        coerceValue(feature.properties[fileField], layerField);
+      } catch (err) {
+        errors.push({ index, field: layerField.name, message: (err as Error).message });
+      }
+    }
+  });
+  return errors;
+}
+
 /** Converts a file value to what the layer field accepts, or throws a message naming the problem. */
 export function coerceValue(value: unknown, field: LayerFieldInfo): AttributeValue {
   if (value === null || value === undefined) return null;
@@ -86,8 +116,8 @@ export function coerceValue(value: unknown, field: LayerFieldInfo): AttributeVal
 
   if (NUMERIC_TYPES.has(field.type)) {
     const n = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim().replace(",", ".")) : NaN;
-    if (!Number.isFinite(n)) throw new Error(`"${String(value)}" is not a number`);
-    if (INTEGER_TYPES.has(field.type) && !Number.isInteger(n)) throw new Error(`${n} is not a whole number`);
+    if (!Number.isFinite(n)) throw new Error("not a number");
+    if (INTEGER_TYPES.has(field.type) && !Number.isInteger(n)) throw new Error("not a whole number");
     return n;
   }
 
@@ -102,10 +132,10 @@ export function coerceValue(value: unknown, field: LayerFieldInfo): AttributeVal
       const ms = /^\d{4}-\d{2}-\d{2}$/.test(value.trim()) ? Date.parse(`${value.trim()}T00:00:00Z`) : Date.parse(value);
       if (Number.isFinite(ms)) return ms;
     }
-    throw new Error(`"${String(value)}" is not a date`);
+    throw new Error("not a date");
   }
 
   const text = value instanceof Date ? value.toISOString().slice(0, 10) : String(value).trim();
-  if (field.length && text.length > field.length) throw new Error(`text is ${text.length} characters, the field allows ${field.length}`);
+  if (field.length && text.length > field.length) throw new Error(`too long (${text.length}/${field.length} characters)`);
   return text;
 }

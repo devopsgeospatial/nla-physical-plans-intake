@@ -61,6 +61,6 @@ describe("coerceValue", () => {
   it("rejects values the field cannot hold", () => {
     assert.throws(() => coerceValue("abc", field("area_sqm")), /not a number/);
     assert.throws(() => coerceValue("not a date", field("approval_date")), /not a date/);
-    assert.throws(() => coerceValue("x".repeat(51), field("district_1")), /allows 50/);
+    assert.throws(() => coerceValue("x".repeat(51), field("district_1")), /too long \(51\/50/);
   });
 });
