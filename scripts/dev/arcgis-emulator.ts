@@ -17,6 +17,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import http from "node:http";
+import proj4 from "proj4";
 
 export const EMULATOR_PORT = Number(process.env.EMULATOR_PORT ?? 4100);
 const ORIGIN = `http://localhost:${EMULATOR_PORT}`;
@@ -103,6 +104,7 @@ function layerJson() {
     globalIdField: "",
     displayField: "plan_id",
     hasAttachments: attachmentsEnabled(),
+    maxRecordCount: 2000,
     capabilities: "Create,Delete,Query,Update,Editing,Extract,Append",
     spatialReference: { wkt: TM_RWANDA_WKT },
     extent: { xmin: 473835, ymin: 4768076, xmax: 476364, ymax: 4769925, spatialReference: { wkt: TM_RWANDA_WKT } },
@@ -275,10 +277,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       return sendJson(res, { addResults, updateResults: [], deleteResults });
     }
 
-    if (sub === "/query") {
-      const list = [...features.values()].map((f) => ({ attributes: f.attributes, geometry: f.geometry }));
-      return sendJson(res, { objectIdFieldName: "OBJECTID", geometryType: "esriGeometryPolygon", spatialReference: { wkt: TM_RWANDA_WKT }, features: list });
-    }
+    if (sub === "/query") return sendJson(res, query(params));
 
     const match = sub.match(/^\/(\d+)\/(addAttachment|attachments)(?:\/(\d+))?$/);
     const feature = match ? features.get(Number(match[1])) : undefined;
@@ -306,7 +305,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   // ---- Dev viewer --------------------------------------------------------------------------------
   if (path === "/") return renderIndex(res);
-  if (path === "/stats.json") return sendJson(res, stats);
+  if (path === "/stats.json") return sendJson(res, { ...stats, queryCalls });
   if (path === "/records.json") {
     return sendJson(res, [...features.values()].map((f) => ({ ...f.attributes, attachments: f.attachments.map((x) => x.name), geometry: f.geometry })));
   }
@@ -319,6 +318,56 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   return sendJson(res, arcgisError(404, `Not found: ${path}`), 404);
 }
+
+const toWgs84 = proj4(TM_RWANDA_WKT, "EPSG:4326");
+
+/**
+ * Layer query subset used by the app: where = "1=1" or "UPPER(field) IN ('a','b')", an optional
+ * WGS84 envelope (bbox intersection), outFields, outSR=4326 and resultOffset/resultRecordCount paging.
+ */
+function query(params: URLSearchParams) {
+  const where = (params.get("where") ?? "1=1").trim();
+  let predicate: (attrs: Record<string, unknown>) => boolean = () => true;
+  const inClause = where.match(/^UPPER\((\w+)\) IN \((.*)\)$/i);
+  if (inClause) {
+    const [, field, list] = inClause;
+    const values = new Set([...list!.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1]!.replace(/''/g, "'")));
+    predicate = (attrs) => values.has(String(attrs[field!] ?? "").toUpperCase());
+  } else if (where !== "1=1") {
+    return arcgisError(400, `Emulator does not support where clause: ${where}`);
+  }
+
+  const envelope = params.get("geometry") ? (JSON.parse(params.get("geometry")!) as { xmin: number; ymin: number; xmax: number; ymax: number }) : null;
+  const wgs = (rings: number[][][]) => rings.map((r) => r.map(([x, y]) => toWgs84.forward([x!, y!])));
+  const matches = [...features.values()].filter((f) => {
+    if (!predicate(f.attributes)) return false;
+    if (!envelope) return true;
+    const pts = wgs((f.geometry as { rings: number[][][] }).rings).flat();
+    const xs = pts.map((p) => p[0]!);
+    const ys = pts.map((p) => p[1]!);
+    return Math.min(...xs) <= envelope.xmax && Math.max(...xs) >= envelope.xmin && Math.min(...ys) <= envelope.ymax && Math.max(...ys) >= envelope.ymin;
+  });
+
+  const offset = Number(params.get("resultOffset") ?? 0);
+  const pageSize = Math.min(Number(params.get("resultRecordCount") ?? 2000), 2000);
+  const page = matches.slice(offset, offset + pageSize);
+  const outFields = (params.get("outFields") ?? "*").split(",").map((f) => f.trim());
+  const pick = (attrs: Record<string, unknown>) =>
+    outFields.includes("*") ? attrs : Object.fromEntries(outFields.map((f) => [f, attrs[f]]));
+  const wantWgs = params.get("outSR") === "4326";
+  queryCalls++;
+  return {
+    objectIdFieldName: "OBJECTID",
+    geometryType: "esriGeometryPolygon",
+    spatialReference: wantWgs ? { wkid: 4326 } : { wkt: TM_RWANDA_WKT },
+    exceededTransferLimit: offset + pageSize < matches.length,
+    features: page.map((f) => ({
+      attributes: pick(f.attributes),
+      geometry: params.get("returnGeometry") === "false" ? undefined : { rings: wantWgs ? wgs((f.geometry as { rings: number[][][] }).rings) : (f.geometry as { rings: number[][][] }).rings },
+    })),
+  };
+}
+let queryCalls = 0;
 
 function issueAccessToken(username: string) {
   const token = randomBytes(24).toString("base64url");

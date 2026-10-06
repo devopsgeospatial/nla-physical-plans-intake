@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { parseUploadFile, UploadValidationError, type ParsedUpload, type UploadFeature } from "@/lib/geo/parse-upload";
 import { AREA_FIELD, AUTO_FIELDS, mapFields, type LayerFieldInfo } from "@/lib/plans/attribute-mapping";
+import { uploadFingerprints, type DuplicateMatch } from "@/lib/plans/duplicates";
 import {
   BrandMark,
   IconAlert,
@@ -37,6 +38,7 @@ interface AppendSuccess {
   objectIds: number[];
   attachmentsPerFeature: number;
   repairedCount: number;
+  duplicates: DuplicateMatch[];
 }
 
 interface AppendFailure {
@@ -52,6 +54,12 @@ type SubmitState =
   | { kind: "success"; result: AppendSuccess }
   | { kind: "error"; failure: AppendFailure };
 
+type DuplicateCheck =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "done"; matches: Map<number, DuplicateMatch> }
+  | { kind: "error"; message: string };
+
 type FileState =
   | { kind: "empty" }
   | { kind: "reading"; name: string }
@@ -59,6 +67,7 @@ type FileState =
   | { kind: "invalid"; name: string; message: string };
 
 const LABEL_FIELDS = ["parcel_upi", "plan_id", "name"];
+const NO_DUPLICATES: ReadonlyMap<number, DuplicateMatch> = new Map();
 /** Rows rendered in the polygon list; flagged polygons are always listed first. */
 const MAX_LIST_ROWS = 400;
 
@@ -88,6 +97,7 @@ export default function UploadWorkspace({
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
   const [hovered, setHovered] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [dupCheck, setDupCheck] = useState<DuplicateCheck>({ kind: "idle" });
   const outcomeRef = useRef<HTMLDivElement>(null);
 
   // Bring the result (success or error) into view in the scrollable panel.
@@ -104,32 +114,58 @@ export default function UploadWorkspace({
     return list;
   }, [layer.fields, mapping]);
 
-  const count = parsed?.features.length ?? 0;
+  const total = parsed?.features.length ?? 0;
+  const duplicates = useMemo(() => (dupCheck.kind === "done" ? dupCheck.matches : NO_DUPLICATES), [dupCheck]);
+  const skipped = useMemo(() => new Set(duplicates.keys()), [duplicates]);
+  const count = total - duplicates.size; // polygons that will actually be appended
+  const inLayerCount = [...duplicates.values()].filter((d) => d.existingObjectId !== undefined).length;
+  const inFileCount = duplicates.size - inLayerCount;
   const listOrder = useMemo(() => {
     if (!parsed) return [];
     const indexes = parsed.features.map((_, i) => i);
-    const flagged = indexes.filter((i) => parsed.features[i]!.selfIntersection);
-    const rest = indexes.filter((i) => !parsed.features[i]!.selfIntersection);
-    return [...flagged, ...rest].slice(0, MAX_LIST_ROWS);
-  }, [parsed]);
-  const totalHa = parsed ? parsed.features.reduce((sum, f) => sum + f.areaSqMeters, 0) / 10_000 : 0;
+    const rank = (i: number) => (skipped.has(i) ? 2 : parsed.features[i]!.selfIntersection ? 0 : 1); // repairs, new, duplicates
+    return indexes.sort((a, b) => rank(a) - rank(b) || a - b).slice(0, MAX_LIST_ROWS);
+  }, [parsed, skipped]);
+  const totalHa = parsed ? parsed.features.reduce((sum, f, i) => (skipped.has(i) ? sum : sum + f.areaSqMeters), 0) / 10_000 : 0;
   const done = submit.kind === "success";
   // Multipart overhead is small; keep a 32 KB margin under the server limit.
   const totalBytes = (upload.kind === "valid" ? upload.file.size : 0) + documents.reduce((n, d) => n + d.size, 0);
   const tooLarge = totalBytes + 32 * 1024 > maxRequestBytes;
-  const canSubmit = !!parsed && !tooLarge && submit.kind !== "submitting" && !done;
+  const canSubmit = !!parsed && count > 0 && dupCheck.kind !== "checking" && !tooLarge && submit.kind !== "submitting" && !done;
 
   const loadFile = useCallback(async (file: File) => {
     setSubmit({ kind: "idle" });
     setSelected(null);
+    setDupCheck({ kind: "idle" });
     setUpload({ kind: "reading", name: file.name });
     try {
-      setUpload({ kind: "valid", file, parsed: await parseUploadFile(file.name, await file.arrayBuffer()) });
+      const result = await parseUploadFile(file.name, await file.arrayBuffer());
+      setUpload({ kind: "valid", file, parsed: result });
+      void checkDuplicates(result);
     } catch (err) {
       const message = err instanceof UploadValidationError ? err.message : `Could not read the file: ${(err as Error).message}`;
       setUpload({ kind: "invalid", name: file.name, message });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Asks the server which polygons already exist in the layer (the append re-checks authoritatively). */
+  async function checkDuplicates(result: ParsedUpload) {
+    setDupCheck({ kind: "checking" });
+    try {
+      const items = uploadFingerprints(result.features, result.fieldNames, layer.fields);
+      const response = await fetch("/api/plans/duplicates", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const json = (await response.json().catch(() => null)) as { ok: boolean; duplicates?: DuplicateMatch[]; error?: string } | null;
+      if (!json?.ok || !json.duplicates) throw new Error(json?.error ?? `HTTP ${response.status}`);
+      setDupCheck({ kind: "done", matches: new Map(json.duplicates.map((d) => [d.index, d])) });
+    } catch (err) {
+      setDupCheck({ kind: "error", message: (err as Error).message });
+    }
+  }
 
   async function onSubmit() {
     if (!canSubmit || upload.kind !== "valid") return;
@@ -155,6 +191,7 @@ export default function UploadWorkspace({
   }
 
   function reset() {
+    setDupCheck({ kind: "idle" });
     setUpload({ kind: "empty" });
     setDocuments([]);
     setSubmit({ kind: "idle" });
@@ -172,6 +209,7 @@ export default function UploadWorkspace({
           selected={selected}
           onSelect={setSelected}
           appended={done}
+          skipped={skipped}
         />
       </div>
 
@@ -234,7 +272,11 @@ export default function UploadWorkspace({
           {parsed && mapping && (
             <div className="animate-rise space-y-4">
               <div className="grid grid-cols-3 gap-2">
-                <Stat value={count.toLocaleString()} label={count === 1 ? "record" : "records"} accent />
+                <Stat
+                  value={dupCheck.kind === "checking" ? "…" : count.toLocaleString()}
+                  label={dupCheck.kind === "checking" ? "checking…" : `new record${count === 1 ? "" : "s"}`}
+                  accent
+                />
                 <Stat value={totalHa >= 100 ? totalHa.toFixed(0) : totalHa.toFixed(2)} label="hectares" />
                 <Stat value={parsed.vertexCount.toLocaleString()} label="vertices" />
               </div>
@@ -244,6 +286,38 @@ export default function UploadWorkspace({
                 {autoFilled.length > 0 && <ChipRow label="Filled automatically" names={autoFilled} tone="sky" />}
                 {mapping.ignored.length > 0 && <ChipRow label="Not in the layer, ignored" names={mapping.ignored} tone="muted" />}
               </div>
+
+              {dupCheck.kind === "checking" && (
+                <div className="flex items-center gap-3 rounded-2xl border border-line bg-white/[0.03] p-3.5 text-[13px] text-slate-300">
+                  <IconSpinner width={16} height={16} className="text-sky" /> Checking {layer.name} for parcels that already exist…
+                </div>
+              )}
+              {dupCheck.kind === "done" && duplicates.size > 0 && (
+                <div className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3.5 text-[13px] leading-5 text-slate-200">
+                  <IconLayers className="mt-0.5 shrink-0 text-slate-400" width={16} height={16} />
+                  <div>
+                    <p className="font-semibold">
+                      {duplicates.size.toLocaleString()} duplicate{duplicates.size === 1 ? "" : "s"} will be skipped
+                    </p>
+                    <p className="mt-0.5 text-slate-400">
+                      {inLayerCount > 0 && `${inLayerCount.toLocaleString()} already in ${layer.name}`}
+                      {inLayerCount > 0 && inFileCount > 0 && " · "}
+                      {inFileCount > 0 && `${inFileCount.toLocaleString()} repeated in this file`}
+                      . Matched by parcel UPI, or identical shape and position. Shown in grey.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {dupCheck.kind === "done" && count === 0 && (
+                <Callout tone="amber" title="Nothing new in this file">
+                  Every polygon is already in {layer.name}.
+                </Callout>
+              )}
+              {dupCheck.kind === "error" && (
+                <Callout tone="amber" title="Couldn't check for duplicates yet">
+                  {dupCheck.message}. Duplicates are still detected and skipped when you submit.
+                </Callout>
+              )}
 
               {parsed.repairCount > 0 && (
                 <div className="flex gap-3 rounded-2xl border border-[#ff4d5e]/30 bg-[#ff4d5e]/10 p-3.5 text-[13px] leading-5 text-red-100">
@@ -263,6 +337,7 @@ export default function UploadWorkspace({
               <ul className="scroll-slim max-h-56 space-y-1 overflow-y-auto pr-1" onMouseLeave={() => setHovered(null)}>
                 {listOrder.map((i) => {
                   const f = parsed.features[i]!;
+                  const dup = duplicates.get(i);
                   return (
                   <li key={i}>
                     <button
@@ -271,17 +346,24 @@ export default function UploadWorkspace({
                       onClick={() => setSelected(i)}
                       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] transition ${
                         selected === i ? "bg-plan/15 ring-1 ring-plan/40" : "hover:bg-white/5"
-                      }`}
+                      } ${dup ? "opacity-60" : ""}`}
                     >
                       <span
                         className={`grid h-6 min-w-6 shrink-0 place-items-center rounded-lg px-1 font-mono text-[10px] ${
-                          f.selfIntersection ? "bg-[#ff4d5e]/20 text-[#ff8a95]" : "bg-plan/15 text-plan"
+                          dup ? "bg-white/10 text-slate-400" : f.selfIntersection ? "bg-[#ff4d5e]/20 text-[#ff8a95]" : "bg-plan/15 text-plan"
                         }`}
                       >
                         {i + 1}
                       </span>
                       <span className="min-w-0 flex-1 truncate font-mono text-slate-200">{featureLabel(f, i)}</span>
-                      {f.selfIntersection ? (
+                      {dup ? (
+                        <span
+                          title={dup.reason === "upi" ? "Same parcel UPI" : "Same shape and position"}
+                          className="shrink-0 rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300"
+                        >
+                          {dup.existingObjectId !== undefined ? `in layer #${dup.existingObjectId}` : `repeat of ${dup.sameFileAs! + 1}`}
+                        </span>
+                      ) : f.selfIntersection ? (
                         <span className="shrink-0 rounded-md bg-[#ff4d5e]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#ff8a95]">
                           repair
                         </span>
@@ -364,6 +446,7 @@ export default function UploadWorkspace({
                   <p className="text-[13px] text-slate-300">
                     to {submit.result.layerName}
                     {submit.result.repairedCount > 0 && ` · ${submit.result.repairedCount} repaired`}
+                    {submit.result.duplicates.length > 0 && ` · ${submit.result.duplicates.length} duplicate${submit.result.duplicates.length === 1 ? "" : "s"} skipped`}
                     {submit.result.attachmentsPerFeature > 0 && ` · ${submit.result.attachmentsPerFeature} PDF each`}
                   </p>
                 </div>
@@ -402,7 +485,13 @@ export default function UploadWorkspace({
             >
               {submit.kind === "submitting" && <span className="shimmer absolute inset-0" aria-hidden />}
               {submit.kind === "submitting" ? <IconSpinner width={18} height={18} /> : <IconUpload width={18} height={18} />}
-              {submit.kind === "submitting" ? "Appending…" : count > 0 ? `Submit ${count} record${count === 1 ? "" : "s"}` : "Submit"}
+              {submit.kind === "submitting"
+                ? "Appending…"
+                : dupCheck.kind === "checking"
+                  ? "Checking for duplicates…"
+                  : parsed && count > 0
+                    ? `Submit ${count.toLocaleString()} new record${count === 1 ? "" : "s"}`
+                    : "Submit"}
             </button>
           )}
         </div>

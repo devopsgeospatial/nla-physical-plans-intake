@@ -9,6 +9,7 @@ import {
   appendFeatures,
   AttributeError,
   LayerSchemaError,
+  NothingToAppendError,
   PartialSubmissionError,
   type AppendRequest,
 } from "@/lib/plans/append-features";
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const result = await appendFeatures({ ...(await readUpload(form, limits)), username: session.username }, tokens);
     console.info(
-      `[append:${requestId}] ${session.username} appended ${result.objectIds.length} feature(s) to ${result.layerName}, ${result.attachmentsPerFeature} PDF(s) each`,
+      `[append:${requestId}] ${session.username} appended ${result.objectIds.length} feature(s) to ${result.layerName}, skipped ${result.duplicates.length} duplicate(s), ${result.attachmentsPerFeature} PDF(s) each`,
     );
 
     const response = NextResponse.json({ ok: true, requestId, ...result }, { status: 201 });
@@ -118,6 +119,7 @@ function errorResponse(err: unknown, requestId: string): NextResponse {
   if (err instanceof UploadValidationError || err instanceof AttributeError) return body(422, err.message, { field: "file" });
   if (err instanceof FeatureRejectedError) return body(422, `ArcGIS rejected the data: ${err.message}`, { field: "file" });
   if (err instanceof LayerSchemaError) return body(422, err.message);
+  if (err instanceof NothingToAppendError) return body(409, err.message, { duplicates: err.duplicates });
 
   console.error(`[append:${requestId}]`, err);
 

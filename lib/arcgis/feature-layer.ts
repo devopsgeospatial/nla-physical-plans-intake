@@ -31,6 +31,7 @@ export interface LayerMetadata {
   hasAttachments: boolean;
   capabilities: string;
   fields: LayerField[];
+  maxRecordCount?: number;
   extent?: { spatialReference?: EsriSpatialReference };
   spatialReference?: EsriSpatialReference;
   sourceSpatialReference?: EsriSpatialReference;
@@ -54,6 +55,16 @@ interface AddAttachmentResponse {
 }
 
 export type AttributeValue = string | number | null;
+
+export interface QueryFeature {
+  attributes: Record<string, unknown>;
+  geometry?: { rings?: number[][][] };
+}
+
+interface QueryResponse {
+  features?: QueryFeature[];
+  exceededTransferLimit?: boolean;
+}
 
 export interface AddedFeature {
   objectId: number;
@@ -151,6 +162,24 @@ export class FeatureLayerClient {
       size: file.size,
       url: `${this.layerUrl}/${objectId}/attachments/${result.objectId}`,
     };
+  }
+
+  /**
+   * Runs a layer query (POST, so long WHERE clauses are fine), following pagination until all
+   * matching features are read.
+   */
+  async queryAll(params: Record<string, string | number | boolean | object>): Promise<QueryFeature[]> {
+    const meta = await this.getMetadata();
+    const pageSize = Math.min(meta.maxRecordCount ?? 1000, 2000);
+    const url = `${this.layerUrl}/query`;
+    const features: QueryFeature[] = [];
+    for (let offset = 0; ; offset += pageSize) {
+      const page = await withToken(this.tokens, (token) =>
+        arcgisRequest<QueryResponse>(url, { ...params, resultOffset: offset, resultRecordCount: pageSize }, { referer: this.tokens.referer, token }),
+      );
+      features.push(...(page.features ?? []));
+      if (!page.exceededTransferLimit || (page.features ?? []).length === 0) return features;
+    }
   }
 
   /** Compensating delete used to roll back features whose append could not be completed. */

@@ -16,6 +16,8 @@ import {
 } from "../geo/esri-geometry";
 import type { ParsedUpload, UploadFeature } from "../geo/parse-upload";
 import { AREA_FIELD, AUTO_FIELDS, coerceValue, mapFields, writableFields, type AttributeValue, type FieldMapping } from "./attribute-mapping";
+import { findDuplicates, uploadFingerprints, type DuplicateMatch } from "./duplicates";
+import { loadExistingParcels } from "./existing-parcels";
 
 export interface AppendRequest {
   upload: ParsedUpload;
@@ -30,6 +32,8 @@ export interface AppendResult {
   attachmentsPerFeature: number;
   /** Polygons that were self-intersecting and repaired with ArcGIS Simplify before appending. */
   repairedCount: number;
+  /** Polygons skipped because they are already in the layer or repeat an earlier polygon in the file. */
+  duplicates: DuplicateMatch[];
   matchedFields: { file: string; layer: string }[];
   ignoredFields: string[];
   warnings: string[];
@@ -40,6 +44,17 @@ export class LayerSchemaError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "LayerSchemaError";
+  }
+}
+
+/** Every polygon in the upload is already in the layer (or repeated in the file). */
+export class NothingToAppendError extends Error {
+  constructor(
+    message: string,
+    readonly duplicates: DuplicateMatch[],
+  ) {
+    super(message);
+    this.name = "NothingToAppendError";
   }
 }
 
@@ -83,9 +98,22 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
   const areaField = has(AREA_FIELD) && !mapping.matched.some((m) => m.layerField.name.toLowerCase() === AREA_FIELD) ? AREA_FIELD : null;
 
   const layerSr = await layer.getSpatialReference();
-  const features = request.upload.features;
+
+  // Duplicates are never appended: skip polygons already in the layer or repeated in the file.
+  const fingerprints = uploadFingerprints(request.upload.features, request.upload.fieldNames, meta.fields);
+  const duplicates = findDuplicates(fingerprints, await loadExistingParcels(layer, meta, fingerprints));
+  const skip = new Set(duplicates.map((d) => d.index));
+  if (skip.size === request.upload.features.length) {
+    throw new NothingToAppendError(
+      `Nothing to append: all ${skip.size} polygon${skip.size === 1 ? " is" : "s are"} already in ${meta.name}.`,
+      duplicates,
+    );
+  }
+  // Keep original indexes so messages ("Feature 2020 …") refer to the file's numbering.
+  const kept = request.upload.features.map((feature, index) => ({ feature, index })).filter(({ index }) => !skip.has(index));
+  const features = kept.map((k) => k.feature);
   // Validate attributes first: a bad value should fail fast, before any geometry service calls.
-  const attributeSets = features.map((feature, index) => buildAttributes(feature, index, mapping));
+  const attributeSets = kept.map(({ feature, index }) => buildAttributes(feature, index, mapping));
 
   const geometries: EsriPolygon[] = [];
   for (const feature of features) geometries.push(await toLayerGeometry(feature, layerSr, config, tokens));
@@ -96,7 +124,7 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
     const repaired = await simplifyPolygons(serviceUrl, toRepair.map((i) => geometries[i]!), layerSr, tokens);
     toRepair.forEach((featureIndex, k) => {
       if (repaired[k]!.rings.length === 0) {
-        throw new AttributeError(`Feature ${featureIndex + 1} has no area left after repairing its self-intersections. Fix it in the source data.`);
+        throw new AttributeError(`Feature ${kept[featureIndex]!.index + 1} has no area left after repairing its self-intersections. Fix it in the source data.`);
       }
       geometries[featureIndex] = repaired[k]!;
     });
@@ -121,7 +149,8 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
         objectIds.push(...added.map((a) => a.objectId));
       } catch (err) {
         if (err instanceof FeatureRejectedError) {
-          throw new FeatureRejectedError(start + err.featureIndex, `Feature ${start + err.featureIndex + 1}: ${err.message}`, err.url, err.code);
+          const fileIndex = kept[start + err.featureIndex]!.index;
+          throw new FeatureRejectedError(fileIndex, `Feature ${fileIndex + 1}: ${err.message}`, err.url, err.code);
         }
         throw err;
       }
@@ -154,6 +183,7 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
     objectIds,
     attachmentsPerFeature: request.documents.length,
     repairedCount: toRepair.length,
+    duplicates,
     matchedFields: mapping.matched.map((m) => ({ file: m.fileField, layer: m.layerField.name })),
     ignoredFields: mapping.ignored,
     warnings: request.upload.warnings,

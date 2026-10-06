@@ -194,9 +194,20 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     const planner = new Browser();
     await planner.signIn("planner.muhanga");
     const before = (await records()).length;
+    const fresh = JSON.stringify({
+      type: "FeatureCollection",
+      features: [0, 1].map((i) => ({
+        type: "Feature",
+        properties: { parcel_upi: `ROLLBACK-${i}` },
+        geometry: { type: "Polygon", coordinates: [[[29.78 + i * 0.001, -2.08], [29.7805 + i * 0.001, -2.08], [29.7805 + i * 0.001, -2.0795], [29.78 + i * 0.001, -2.08]]] },
+      })),
+    });
     process.env.EMULATOR_ATTACHMENTS = "off"; // the in-process emulator now refuses addAttachment
     try {
-      const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE, documents: PDF }) });
+      const res = await planner.request(`${APP}/api/plans/submit`, {
+        method: "POST",
+        body: await upload({ file: ["fresh.geojson", "application/geo+json", new Blob([fresh])], documents: PDF }),
+      });
       const body = await res.json();
       assert.equal(res.status, 502, JSON.stringify(body));
       assert.equal(body.rolledBack, true);
@@ -205,6 +216,57 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
       delete process.env.EMULATOR_ATTACHMENTS;
     }
     assert.equal((await records()).length, before);
+  });
+
+  it("never appends duplicates: parcels already in the layer (by UPI or geometry) and repeats in the file are skipped", async () => {
+    const planner = new Browser();
+    await planner.signIn("planner.huye");
+
+    // The Shapefile was appended by an earlier test: everything in it now exists.
+    let res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE }) });
+    let body = await res.json();
+    assert.equal(res.status, 409, JSON.stringify(body));
+    assert.match(body.error, /already in Physical_Plans/);
+    assert.equal(body.duplicates.length, 3);
+    assert.ok(body.duplicates.every((d: { reason: string; existingObjectId?: number }) => d.reason === "upi" && d.existingObjectId! > 0));
+
+    // Mixed file: an existing parcel re-surveyed without its UPI (geometry match), one new parcel,
+    // and the new parcel repeated with the same UPI.
+    const geo = JSON.parse(await readFile("samples/muhanga-parcels-wgs84.geojson", "utf8")) as {
+      features: { properties: Record<string, unknown>; geometry: { coordinates: number[][][] } }[];
+    };
+    const existingNoUpi = { ...geo.features[0]!, properties: { plan_id: "PP-RESURVEY" } };
+    const fresh = {
+      type: "Feature",
+      properties: { parcel_upi: "2/01/05/01/9999", plan_id: "PP-NEW" },
+      geometry: { type: "Polygon", coordinates: [[[29.76, -2.08], [29.7605, -2.08], [29.7605, -2.0795], [29.76, -2.08]]] },
+    };
+    const mixed = JSON.stringify({ type: "FeatureCollection", features: [existingNoUpi, fresh, { ...fresh, properties: { parcel_upi: " 2/01/05/01/9999 " } }] });
+
+    // The preview endpoint (used by the page) reports the same duplicates the append will skip.
+    const { uploadFingerprints } = await import("../../lib/plans/duplicates");
+    const { parseUploadFile } = await import("../../lib/geo/parse-upload");
+    const parsed = await parseUploadFile("mixed.geojson", new TextEncoder().encode(mixed).buffer as ArrayBuffer);
+    const layerFields = [{ name: "parcel_upi", type: "esriFieldTypeString", editable: true }, { name: "plan_id", type: "esriFieldTypeString", editable: true }];
+    const preview = await planner.request(`${APP}/api/plans/duplicates`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items: uploadFingerprints(parsed.features, parsed.fieldNames, layerFields) }),
+    });
+    const previewBody = await preview.json();
+    assert.equal(preview.status, 200, JSON.stringify(previewBody));
+    assert.deepEqual(
+      previewBody.duplicates.map((d: { index: number; reason: string }) => [d.index, d.reason]),
+      [[0, "geometry"], [2, "upi"]],
+    );
+
+    res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: ["mixed.geojson", "application/geo+json", new Blob([mixed])] }) });
+    body = await res.json();
+    assert.equal(res.status, 201, JSON.stringify(body));
+    assert.equal(body.objectIds.length, 1);
+    assert.equal(body.duplicates.length, 2);
+    assert.equal((await records()).filter((r) => r.parcel_upi === "2/01/05/01/9999").length, 1);
+    assert.equal((await records()).filter((r) => r.plan_id === "PP-RESURVEY").length, 0);
   });
 
   it("rejects invalid files and values, naming the feature and field", async () => {
@@ -224,7 +286,8 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
       features: [1, 2].map((i) => ({
         type: "Feature",
         properties: { plan_id: `P${i}`, district_1: i === 2 ? "x".repeat(60) : "Muhanga" },
-        geometry: { type: "Polygon", coordinates: [[[29.765, -2.09], [29.766, -2.09], [29.766, -2.089], [29.765, -2.09]]] },
+        // Distinct locations: identical shapes would (correctly) be skipped as repeats.
+        geometry: { type: "Polygon", coordinates: [[[29.6 + i * 0.01, -2.09], [29.601 + i * 0.01, -2.09], [29.601 + i * 0.01, -2.089], [29.6 + i * 0.01, -2.09]]] },
       })),
     });
     r = await post({ file: ["long.geojson", "application/geo+json", new Blob([tooLong])] });

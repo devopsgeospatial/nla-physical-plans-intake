@@ -13,6 +13,8 @@ interface Props {
   onSelect: (index: number) => void;
   /** After a successful append the polygons switch to the "saved" colour. */
   appended: boolean;
+  /** Indexes of polygons that will not be appended (duplicates). */
+  skipped: ReadonlySet<number>;
 }
 
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
@@ -35,13 +37,13 @@ const BASEMAPS = {
 } as const;
 type BasemapKey = keyof typeof BASEMAPS;
 
-const COLORS = { plan: "#ffb020", saved: "#20a35c", repair: "#ff4d5e" };
+const COLORS = { plan: "#ffb020", saved: "#20a35c", repair: "#ff4d5e", skip: "#94a3b8" };
 const MAX_KINK_MARKERS = 500;
 const MAX_LABELS = 40;
 const MAX_POPUP_ROWS = 24;
 
 /** Leaflet touches `window` on import, so it is loaded lazily inside effects (client only). */
-export default function UploadPreviewMap({ features, labels, hovered, selected, onSelect, appended }: Props) {
+export default function UploadPreviewMap({ features, labels, hovered, selected, onSelect, appended, skipped }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const leafletRef = useRef<typeof import("leaflet") | null>(null);
@@ -49,7 +51,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   const kinkLayerRef = useRef<LayerGroup | null>(null);
   const featureLayersRef = useRef<Path[]>([]);
   const baseLayersRef = useRef<TileLayer[]>([]);
-  const propsRef = useRef({ features, labels, appended, onSelect });
+  const propsRef = useRef({ features, labels, appended, onSelect, skipped });
   const [basemap, setBasemap] = useState<BasemapKey>("imagery");
   const [ready, setReady] = useState(false);
 
@@ -90,12 +92,12 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   }, [basemap, ready]);
 
   // ---- data ------------------------------------------------------------------------------------
-  propsRef.current = { features, labels, appended, onSelect };
+  propsRef.current = { features, labels, appended, onSelect, skipped };
 
-  /** Repair-flagged polygons are red until appended (by then ArcGIS has repaired them). */
+  /** Duplicates are grey; repair-flagged polygons red until appended (by then ArcGIS has repaired them). */
   const styleFor = (index: number, highlighted: boolean) => {
-    const { features: current, appended: saved } = propsRef.current;
-    const state: PolygonState = saved ? "saved" : current?.[index]?.selfIntersection ? "repair" : "plan";
+    const { features: current, appended: saved, skipped: skip } = propsRef.current;
+    const state: PolygonState = skip.has(index) ? "skip" : saved ? "saved" : current?.[index]?.selfIntersection ? "repair" : "plan";
     return highlighted ? highlightStyle(state) : baseStyle(state);
   };
 
@@ -153,7 +155,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
       l.setStyle(styleFor(i, i === hovered || i === selected));
       if (i === hovered || i === selected) l.bringToFront();
     });
-  }, [hovered, selected, appended]);
+  }, [hovered, selected, appended, skipped]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -197,11 +199,12 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   );
 }
 
-type PolygonState = "plan" | "saved" | "repair";
+type PolygonState = "plan" | "saved" | "repair" | "skip";
 
 function baseStyle(state: PolygonState) {
   const color = COLORS[state];
-  return { color, weight: 2.5, opacity: 1, fillColor: color, fillOpacity: 0.22, dashArray: state === "repair" ? "6 4" : undefined };
+  const dashed = state === "repair" || state === "skip";
+  return { color, weight: 2.5, opacity: 1, fillColor: color, fillOpacity: state === "skip" ? 0.08 : 0.22, dashArray: dashed ? "6 4" : undefined };
 }
 
 function highlightStyle(state: PolygonState) {
