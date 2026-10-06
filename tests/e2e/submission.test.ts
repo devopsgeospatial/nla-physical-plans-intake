@@ -8,7 +8,6 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
-import { createRequire } from "node:module";
 import { after, before, describe, it } from "node:test";
 
 const APP_PORT = 3199;
@@ -24,12 +23,14 @@ before(async () => {
   emulatorUrl = `http://localhost:${mod.EMULATOR_PORT}`;
   emulator = await mod.startEmulator();
 
-  const nextBin = createRequire(import.meta.url).resolve("next/dist/bin/next");
-  app = spawn(process.execPath, [nextBin, "start", "-p", String(APP_PORT)], {
+  // The production server exactly as deployed (standalone bundle, see npm run build).
+  app = spawn(process.execPath, [".next/standalone/server.js"], {
     stdio: ["ignore", "ignore", "inherit"],
     env: {
       ...process.env,
       NODE_ENV: "production",
+      PORT: String(APP_PORT),
+      HOSTNAME: "127.0.0.1",
       ARCGIS_PORTAL_URL: mod.EMULATOR_PORTAL_URL,
       ARCGIS_FEATURE_LAYER_URL: mod.EMULATOR_LAYER_URL,
       ARCGIS_OAUTH_CLIENT_ID: "e2e",
@@ -43,7 +44,7 @@ before(async () => {
     if (await fetch(APP).then(() => true, () => false)) return;
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error("app did not start; run `next build` first");
+  throw new Error("app did not start; run `npm run build` first");
 });
 
 after(() => {

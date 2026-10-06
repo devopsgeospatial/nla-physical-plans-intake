@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "build": "next build && node scripts/copy-static.mjs",
+    "start": "node .next/standalone/server.js",
     "typecheck": "tsc --noEmit",
     "dev:local": "tsx scripts/dev/dev-local.ts",
     "test": "tsx --test tests/unit/*.test.ts",
-    "test:e2e": "next build && tsx --test tests/e2e/*.test.ts"
+    "test:e2e": "npm run build && tsx --test tests/e2e/*.test.ts"
   },
   "dependencies": {
     "@turf/area": "^7.4.0",
