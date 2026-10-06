@@ -1,10 +1,145 @@
 @import "tailwindcss";
 @import "leaflet/dist/leaflet.css";
 
-:root {
-  color-scheme: light;
+@theme {
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+
+  --color-ink-950: #070b14;
+  --color-ink-900: #0b1120;
+  --color-ink-800: #121a2c;
+  --color-ink-700: #1c2740;
+  --color-ink-600: #2a3754;
+  --color-line: rgb(148 163 184 / 0.14);
+
+  /* Rwanda sky blue, sun gold, hill green: used sparingly as accents. */
+  --color-sky: #00a1de;
+  --color-sun: #fad201;
+  --color-hill: #20a35c;
+  --color-plan: #ffb020;
+
+  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop: pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  background: var(--color-ink-950);
+  color: #e6ebf5;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.glass {
+  background: linear-gradient(180deg, rgb(15 22 38 / 0.86), rgb(10 15 28 / 0.9));
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.65), inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+.scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184 / 0.25) transparent;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #00a1de 0%, #20a35c 100%);
+  box-shadow: 0 10px 30px -10px rgb(0 161 222 / 0.7);
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.25), transparent);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* ---- Leaflet, restyled for the dark UI -------------------------------------------------------- */
+.leaflet-container {
+  background: var(--color-ink-900);
+  font-family: var(--font-sans);
+}
+.leaflet-bar {
+  border: 1px solid var(--color-line) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.6) !important;
+}
+.leaflet-bar a {
+  background: rgb(15 22 38 / 0.9) !important;
+  color: #e6ebf5 !important;
+  border-bottom-color: var(--color-line) !important;
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+}
+.leaflet-bar a:hover {
+  background: var(--color-ink-700) !important;
+}
+.leaflet-control-attribution {
+  background: rgb(7 11 20 / 0.6) !important;
+  color: #94a3b8 !important;
+  font-size: 10px !important;
+  border-radius: 6px 0 0 0;
+}
+.leaflet-control-attribution a {
+  color: #cbd5e1 !important;
+}
+.leaflet-control-scale-line {
+  background: rgb(7 11 20 / 0.6);
+  color: #cbd5e1;
+  border-color: #cbd5e1;
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: rgb(12 18 32 / 0.96);
+  color: #e6ebf5;
+  border: 1px solid var(--color-line);
+  box-shadow: 0 20px 50px -15px rgb(0 0 0 / 0.8);
+}
+.leaflet-popup-content-wrapper {
+  border-radius: 14px;
+}
+.leaflet-popup-content {
+  margin: 14px 16px;
+  font-size: 12px;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: #94a3b8;
+}
+.plan-label {
+  background: rgb(7 11 20 / 0.78);
+  border: 1px solid rgb(255 176 32 / 0.6);
+  color: #ffd27a;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font: 700 11px var(--font-mono);
+  min-width: 22px;
+  text-align: center;
+  box-shadow: none;
+  white-space: nowrap;
+}
+.plan-label::before {
+  display: none;
 }

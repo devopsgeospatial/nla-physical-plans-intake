@@ -131,7 +131,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal((await planner.signIn("planner.muhanga")).pathname, "/");
     const page = await (await planner.get(APP)).text();
     assert.match(page, /Muhanga Planner/);
-    assert.match(page, /Attachments \(PDF\)/);
+    assert.match(page, /Upload a plan/);
 
     const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE, documents: PDF }) });
     const body = await res.json();
