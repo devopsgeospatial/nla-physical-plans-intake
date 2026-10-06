@@ -1,0 +1,41 @@
+{
+  "name": "physical-plans-intake",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "provision-layer": "tsx --env-file=.env.local scripts/provision-layer.ts",
+    "dev:local": "tsx scripts/dev/dev-local.ts",
+    "test": "tsx --test tests/unit/*.test.ts",
+    "test:e2e": "next build && tsx --test tests/e2e/*.test.ts",
+    "screenshots": "tsx scripts/dev/screenshots.ts"
+  },
+  "dependencies": {
+    "@turf/area": "^7.4.0",
+    "@turf/kinks": "^7.4.0",
+    "leaflet": "^1.9.4",
+    "next": "^16.3.8",
+    "proj4": "^2.22.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "server-only": "^0.0.1",
+    "shpjs": "^6.2.0"
+  },
+  "devDependencies": {
+    "@mapbox/shp-write": "^0.4.3",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/geojson": "^7946.0.16",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "playwright-core": "^1.63.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

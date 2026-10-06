@@ -1,0 +1,167 @@
+/**
+ * Typed client for a single hosted feature layer: metadata, applyEdits and addAttachment.
+ */
+import type { EsriPolygon, EsriSpatialReference } from "../geo/esri-geometry";
+import { withToken, type TokenProvider } from "./auth";
+import { ArcGisRequestError, arcgisRequest } from "./rest";
+
+export interface CodedValueDomain {
+  type: "codedValue";
+  name?: string;
+  codedValues: { name: string; code: string | number }[];
+}
+
+export interface LayerField {
+  name: string;
+  type: string;
+  alias?: string;
+  length?: number;
+  nullable?: boolean;
+  editable?: boolean;
+  domain?: CodedValueDomain | { type: string } | null;
+}
+
+export interface LayerMetadata {
+  id: number;
+  name: string;
+  type: string;
+  geometryType: string;
+  objectIdField: string;
+  globalIdField?: string;
+  hasAttachments: boolean;
+  capabilities: string;
+  fields: LayerField[];
+  extent?: { spatialReference?: EsriSpatialReference };
+  spatialReference?: EsriSpatialReference;
+  sourceSpatialReference?: EsriSpatialReference;
+}
+
+interface EditResult {
+  objectId: number;
+  globalId?: string | null;
+  success: boolean;
+  error?: { code: number; description: string } | null;
+}
+
+interface ApplyEditsResponse {
+  addResults?: EditResult[];
+  updateResults?: EditResult[];
+  deleteResults?: EditResult[];
+}
+
+interface AddAttachmentResponse {
+  addAttachmentResult?: EditResult;
+}
+
+export type AttributeValue = string | number | null;
+
+export interface AddedFeature {
+  objectId: number;
+  globalId: string | null;
+}
+
+export interface AddedAttachment {
+  attachmentId: number;
+  globalId: string | null;
+  fileName: string;
+  size: number;
+  url: string;
+}
+
+const METADATA_TTL_MS = 5 * 60 * 1000;
+/** Layer JSON is identical for every user, so it is cached per process and layer URL. */
+const metadataCache = new Map<string, { value: Promise<LayerMetadata>; expiresAt: number }>();
+
+export class FeatureLayerClient {
+  constructor(
+    readonly layerUrl: string,
+    private readonly tokens: TokenProvider,
+  ) {}
+
+  /** Layer JSON, cached for 5 minutes per process so schema changes are picked up without a restart. */
+  getMetadata(): Promise<LayerMetadata> {
+    const hit = metadataCache.get(this.layerUrl);
+    if (hit && hit.expiresAt > Date.now()) return hit.value;
+
+    const value = withToken(this.tokens, (token) =>
+      arcgisRequest<LayerMetadata>(this.layerUrl, {}, { referer: this.tokens.referer, token, method: "GET" }),
+    ).catch((err) => {
+      metadataCache.delete(this.layerUrl);
+      throw err;
+    });
+    metadataCache.set(this.layerUrl, { value, expiresAt: Date.now() + METADATA_TTL_MS });
+    return value;
+  }
+
+  async getSpatialReference(): Promise<EsriSpatialReference> {
+    const meta = await this.getMetadata();
+    const sr = meta.sourceSpatialReference ?? meta.spatialReference ?? meta.extent?.spatialReference;
+    if (!sr) throw new ArcGisRequestError("Layer metadata does not expose a spatial reference.", this.layerUrl);
+    return sr;
+  }
+
+  async addFeature(geometry: EsriPolygon, attributes: Record<string, AttributeValue>): Promise<AddedFeature> {
+    const url = `${this.layerUrl}/applyEdits`;
+    const response = await withToken(this.tokens, (token) =>
+      arcgisRequest<ApplyEditsResponse>(
+        url,
+        { adds: [{ geometry, attributes }], rollbackOnFailure: true },
+        { referer: this.tokens.referer, token },
+      ),
+    );
+
+    const result = response.addResults?.[0];
+    if (!result) throw new ArcGisRequestError("applyEdits returned no addResults.", url);
+    if (!result.success) {
+      throw new ArcGisRequestError(
+        `applyEdits rejected the feature: ${result.error?.description ?? "unknown error"}`,
+        url,
+        result.error?.code,
+      );
+    }
+    return { objectId: result.objectId, globalId: result.globalId ?? null };
+  }
+
+  async addAttachment(objectId: number, file: Blob, fileName: string): Promise<AddedAttachment> {
+    const url = `${this.layerUrl}/${objectId}/addAttachment`;
+    const response = await withToken(this.tokens, (token) =>
+      arcgisRequest<AddAttachmentResponse>(
+        url,
+        {},
+        { referer: this.tokens.referer, token, files: { attachment: { blob: file, fileName } }, timeoutMs: 180_000 },
+      ),
+    );
+
+    const result = response.addAttachmentResult;
+    if (!result?.success) {
+      throw new ArcGisRequestError(
+        `addAttachment failed for "${fileName}": ${result?.error?.description ?? "no addAttachmentResult returned"}`,
+        url,
+        result?.error?.code,
+      );
+    }
+    return {
+      attachmentId: result.objectId,
+      globalId: result.globalId ?? null,
+      fileName,
+      size: file.size,
+      url: `${this.layerUrl}/${objectId}/attachments/${result.objectId}`,
+    };
+  }
+
+  /** Compensating delete used to roll back a feature whose attachments could not be stored. */
+  async deleteFeature(objectId: number): Promise<void> {
+    const url = `${this.layerUrl}/applyEdits`;
+    const response = await withToken(this.tokens, (token) =>
+      arcgisRequest<ApplyEditsResponse>(url, { deletes: [objectId] }, { referer: this.tokens.referer, token }),
+    );
+    const result = response.deleteResults?.[0];
+    if (!result?.success) {
+      throw new ArcGisRequestError(
+        `Rollback delete of objectId ${objectId} failed: ${result?.error?.description ?? "no deleteResults returned"}`,
+        url,
+        result?.error?.code,
+      );
+    }
+  }
+}
