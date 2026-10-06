@@ -37,8 +37,8 @@ const BASEMAPS = {
 } as const;
 type BasemapKey = keyof typeof BASEMAPS;
 
-// NLA blue for new parcels; skipped duplicates are white outlines only.
-const COLORS = { plan: "#078ece", saved: "#2fbf71", repair: "#ff4d4d", skip: "#ffffff" };
+// Hub blue for new parcels, amber for the selected one; skipped duplicates are white outlines only.
+const COLORS = { plan: "#0d73b0", saved: "#2fbf71", repair: "#ff4d4d", skip: "#ffffff" };
 const MAX_KINK_MARKERS = 500;
 const MAX_LABELS = 40;
 const MAX_POPUP_ROWS = 24;
@@ -182,7 +182,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
             key={key}
             type="button"
             onClick={() => setBasemap(key)}
-            className={`px-3 py-2 transition ${basemap === key ? "bg-ink text-white" : "text-ink hover:bg-nla-tint"}`}
+            className={`px-3 py-2 transition ${basemap === key ? "bg-hub text-white" : "text-ink hover:bg-nla-tint"}`}
           >
             {BASEMAPS[key].label}
           </button>
@@ -208,7 +208,7 @@ function baseStyle(state: PolygonState) {
 }
 
 function highlightStyle(state: PolygonState) {
-  return { color: "#000000", weight: 2.5, opacity: 1, fillColor: COLORS[state], fillOpacity: state === "skip" ? 0.15 : 0.7, dashArray: undefined };
+  return { color: "#ffa800", weight: 3, opacity: 1, fillColor: COLORS[state], fillOpacity: state === "skip" ? 0.15 : 0.6, dashArray: undefined };
 }
 
 /** Breathing room around fitted geometry (top leaves space for the basemap switcher). */

@@ -2,22 +2,26 @@
 @import "leaflet/dist/leaflet.css";
 
 /*
- * Visual language: black, white and NLA blue (#078ECE, from lands.rw). Hairlines instead of boxes,
- * large light type, pill buttons, no gradients or shadows.
+ * Visual language of the Rwanda Spatial Data Hub (geodata.rw, run by NLA): slate-teal header bar,
+ * near-black band with a grey panel, white content, Avenir Next, square #0D73B0 buttons, amber accent.
  */
 @theme {
-  --font-sans: var(--font-nunito), "Avenir Next", Avenir, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Avenir Next", Avenir, var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
 
-  --color-ink: #000000;
-  --color-ink-soft: #111111;
-  --color-graphite: #6b6b6b;
-  --color-hairline: #e6e6e6;
+  --color-hub: #193443;
+  --color-ink: #110e0e;
+  --color-night: #090808;
+  --color-slab: #2b2b2b;
+  --color-graphite: #4c4c4c;
+  --color-hairline: #e7e7e7;
   --color-paper: #ffffff;
-  --color-mist: #f6f7f8;
+  --color-mist: #f5f5f5;
+  --color-silver: #d3d3d3;
 
-  --color-nla: #078ece;
-  --color-nla-light: #5bbde9;
-  --color-nla-tint: #e8f5fc;
+  --color-nla: #0d73b0;
+  --color-nla-light: #5aaedd;
+  --color-nla-tint: #eaf3f9;
+  --color-amber: #ffa800;
 
   --color-alert: #c62828;
   --color-warn: #a15c00;
@@ -30,7 +34,7 @@ body {
 }
 
 body {
-  background: var(--color-ink);
+  background: var(--color-night);
   color: var(--color-ink);
   font-family: var(--font-sans);
   font-feature-settings: "tnum" 1;
@@ -103,7 +107,7 @@ body {
   font-size: 10px;
 }
 .leaflet-popup-content-wrapper {
-  border-radius: 2px;
+  border-radius: 0;
   box-shadow: 0 1px 0 var(--color-hairline), 0 12px 32px rgb(0 0 0 / 0.25);
 }
 .leaflet-popup-tip {
@@ -114,11 +118,11 @@ body {
   font-size: 12px;
 }
 .plan-label {
-  background: #000;
+  background: var(--color-hub);
   border: 0;
   color: #fff;
-  border-radius: 999px;
-  padding: 0 7px;
+  border-radius: 0;
+  padding: 0 6px;
   font: 600 11px/18px var(--font-sans);
   min-width: 18px;
   text-align: center;

@@ -200,25 +200,22 @@ export default function UploadWorkspace({
         : null;
 
   return (
-    <div className="flex h-dvh flex-col bg-ink">
+    <div className="flex h-dvh flex-col bg-night">
       {/* Header */}
-      <header className="relative z-[1001] flex h-14 shrink-0 items-center justify-between gap-4 border-b-2 border-nla bg-ink px-5 text-white sm:px-6">
-        <div className="flex min-w-0 items-baseline gap-4">
-          <h1 className="truncate text-[17px] font-light tracking-[-0.005em]">Physical plan submission</h1>
-          <span className="hidden truncate text-[13px] text-white/45 md:inline">
+      <header className="relative z-[1001] flex h-16 shrink-0 items-center justify-between gap-4 bg-hub px-5 text-white sm:px-8">
+        <div className="flex min-w-0 items-baseline gap-5">
+          <h1 className="truncate text-[17px] font-normal">Physical Plan Submission</h1>
+          <span className="hidden truncate text-[14px] text-white/55 md:inline">
             {layer.name} · {portalHost}
           </span>
         </div>
-        <div className="flex items-center gap-4">
-          <p className="hidden text-right text-[13px] leading-tight sm:block">
+        <div className="flex items-center gap-5">
+          <p className="hidden text-right text-[14px] leading-tight sm:block">
             <span className="block text-white">{user.fullName}</span>
-            <span className="block text-white/45">{user.username}</span>
+            <span className="block text-[12px] text-white/55">{user.username}</span>
           </p>
-          <span className="grid size-8 place-items-center rounded-full border border-nla-light text-[11px] font-semibold text-nla-light">
-            {initials(user.fullName)}
-          </span>
           <form action="/api/auth/logout" method="post">
-            <button type="submit" className="h-8 rounded-full border border-white/30 px-4 text-[13px] text-white transition hover:border-white">
+            <button type="submit" className="h-9 rounded-none border border-white/45 px-4 text-[14px] text-white transition hover:bg-white/10">
               Sign out
             </button>
           </form>
@@ -384,7 +381,7 @@ export default function UploadWorkspace({
             <div ref={outcomeRef} className="scroll-mb-6 px-6 py-6">
               {submit.kind === "success" && (
                 <div className="fade-in border-l-4 border-ok pl-4" role="status">
-                  <p className="text-[22px] font-light leading-tight text-ink">
+                  <p className="text-[20px] font-normal leading-snug text-ink">
                     {submit.result.objectIds.length.toLocaleString()} record{submit.result.objectIds.length === 1 ? "" : "s"} appended to {submit.result.layerName}.
                   </p>
                   <p className="mt-2 text-[14px] leading-6 text-graphite">
@@ -422,7 +419,7 @@ export default function UploadWorkspace({
               <button
                 type="button"
                 onClick={reset}
-                className="h-12 w-full rounded-full border border-ink text-[15px] font-semibold text-ink transition hover:bg-ink hover:text-white"
+                className="h-12 w-full rounded-none border border-nla text-[16px] text-nla transition hover:bg-nla hover:text-white"
               >
                 Upload another plan
               </button>
@@ -431,7 +428,7 @@ export default function UploadWorkspace({
                 type="button"
                 onClick={onSubmit}
                 disabled={!canSubmit}
-                className="h-12 w-full rounded-full bg-ink text-[15px] font-semibold text-white transition hover:bg-nla disabled:cursor-not-allowed disabled:bg-[#d6d6d6]"
+                className="h-12 w-full rounded-none bg-nla text-[16px] text-white transition hover:bg-[#0b6299] disabled:cursor-not-allowed disabled:bg-[#cfcfcf]"
               >
                 {submit.kind === "submitting"
                   ? "Appending…"
@@ -467,8 +464,8 @@ export default function UploadWorkspace({
 function Section({ n, title, note, children }: { n: number; title: string; note?: string; children: ReactNode }) {
   return (
     <section className="space-y-4 border-b border-hairline px-6 py-6">
-      <h2 className="flex items-baseline gap-3 text-[16px] font-semibold text-ink">
-        <span className="text-[15px] font-light tabular-nums text-nla">{String(n).padStart(2, "0")}</span>
+      <h2 className="flex items-baseline gap-3 text-[19px] font-normal text-ink">
+        <span className="text-[19px] tabular-nums text-nla">{n}.</span>
         {title}
         {note && <span className="text-[13px] font-normal text-graphite">{note}</span>}
       </h2>
@@ -502,8 +499,8 @@ function DropZone(props: {
       }}
       onDragLeave={() => setOver(false)}
       onDrop={onDrop}
-      className={`block cursor-pointer rounded-[3px] border border-dashed px-5 py-6 transition ${
-        over ? "border-nla bg-nla-tint" : "border-[#c9c9c9] hover:border-nla"
+      className={`block cursor-pointer border border-dashed px-5 py-6 transition ${
+        over ? "border-nla bg-nla-tint" : "border-[#bdbdbd] bg-mist hover:border-nla"
       } ${props.disabled ? "pointer-events-none opacity-40" : ""}`}
     >
       <span className="block text-[15px] text-ink">{props.title}</span>
@@ -546,7 +543,7 @@ function FileRow({ name, size, onRemove }: { name: string; size: number; onRemov
 function Figure({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
   return (
     <div className="px-6 py-5">
-      <p className={`text-[38px] font-extralight leading-none tracking-[-0.02em] tabular-nums ${accent ? "text-nla" : "text-ink"}`}>{value}</p>
+      <p className={`text-[34px] font-normal leading-none tabular-nums ${accent ? "text-nla" : "text-ink"}`}>{value}</p>
       <p className="mt-2 text-[13px] text-graphite">{label}</p>
     </div>
   );
@@ -585,15 +582,6 @@ function formatIdRange(ids: number[]): string {
   return consecutive
     ? `${sorted[0]}–${sorted[sorted.length - 1]} (${ids.length.toLocaleString()})`
     : `${sorted.slice(0, 10).join(", ")} … +${(ids.length - 10).toLocaleString()} more`;
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]!.toUpperCase())
-    .join("");
 }
 
 function formatArea(m2: number): string {
