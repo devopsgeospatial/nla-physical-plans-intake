@@ -37,7 +37,7 @@ const BASEMAPS = {
 } as const;
 type BasemapKey = keyof typeof BASEMAPS;
 
-const COLORS = { plan: "#ffb020", saved: "#20a35c", repair: "#ff4d5e", skip: "#94a3b8" };
+const COLORS = { plan: "#22d3ee", saved: "#22c55e", repair: "#f43f5e", skip: "#cbd5e1" };
 const MAX_KINK_MARKERS = 500;
 const MAX_LABELS = 40;
 const MAX_POPUP_ROWS = 24;
@@ -87,7 +87,10 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
     baseLayersRef.current.forEach((l) => l.remove());
     const def = BASEMAPS[basemap];
     baseLayersRef.current = def.layers.map((url, i) =>
-      L.tileLayer(url, { maxZoom: 19, attribution: i === 0 ? def.attribution : undefined }).addTo(map).bringToBack(),
+      // Skip loading tiles for intermediate zoom levels during fly animations: the final view's imagery arrives sooner.
+      L.tileLayer(url, { maxZoom: 19, updateWhenZooming: false, keepBuffer: 3, attribution: i === 0 ? def.attribution : undefined })
+        .addTo(map)
+        .bringToBack(),
     );
   }, [basemap, ready]);
 
@@ -124,7 +127,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
         featureLayersRef.current[i] = leafletLayer as Path;
         leafletLayer.bindPopup(() => popupHtml(propsRef.current.labels[i] ?? `Polygon ${i + 1}`, feature.properties ?? {}), {
           maxWidth: 340,
-          autoPanPaddingTopLeft: [440, 90],
+          autoPanPadding: [40, 40],
         });
         leafletLayer.on("click", () => propsRef.current.onSelect(i));
         if (features.length <= MAX_LABELS) {
@@ -146,7 +149,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
         ),
       ).addTo(map);
     }
-    map.flyToBounds(layer.getBounds(), { ...fitPadding(), maxZoom: 18, duration: 1.1 });
+    map.flyToBounds(layer.getBounds(), { ...fitPadding(), maxZoom: 18, duration: 0.7 });
   }, [features, ready]);
 
   // ---- appearance updates ----------------------------------------------------------------------
@@ -173,22 +176,22 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
       <div ref={containerRef} className="absolute inset-0" aria-label="Map of the uploaded polygons" />
 
       {empty && (
-        <div className="pointer-events-none absolute inset-0 hidden items-center justify-center lg:flex lg:pl-[440px]">
-          <div className="glass animate-rise rounded-2xl px-5 py-3 text-center">
-            <p className="text-sm font-medium">Your plan will appear here</p>
-            <p className="text-xs text-slate-400">Every polygon, on the map, before anything is saved</p>
+        <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center p-6">
+          <div className="animate-rise rounded-2xl border border-white/10 bg-night/85 px-5 py-3.5 text-center shadow-2xl backdrop-blur">
+            <p className="text-sm font-semibold text-white">Your plan will appear here</p>
+            <p className="mt-0.5 text-xs text-ice/70">Every polygon, on the map, before anything is saved</p>
           </div>
         </div>
       )}
 
-      <div className="glass absolute bottom-24 right-3 z-[1000] flex gap-1 rounded-xl p-1 lg:bottom-[118px]">
+      <div className="absolute right-3 top-3 z-[1000] flex gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
         {(Object.keys(BASEMAPS) as BasemapKey[]).map((key) => (
           <button
             key={key}
             type="button"
             onClick={() => setBasemap(key)}
             className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
-              basemap === key ? "bg-white text-ink-950" : "text-slate-300 hover:bg-white/10"
+              basemap === key ? "bg-night text-ice" : "text-slate-600 hover:bg-slate-100"
             }`}
           >
             {BASEMAPS[key].label}
@@ -212,10 +215,9 @@ function highlightStyle(state: PolygonState) {
   return { color: "#ffffff", weight: 3.5, opacity: 1, fillColor: color, fillOpacity: 0.45, dashArray: undefined };
 }
 
-/** Keep fitted geometry clear of the floating panel on desktop. */
+/** Breathing room around fitted geometry (top leaves space for the basemap switcher). */
 function fitPadding(): { paddingTopLeft: [number, number]; paddingBottomRight: [number, number] } {
-  const wide = typeof window !== "undefined" && window.innerWidth >= 1024;
-  return wide ? { paddingTopLeft: [470, 110], paddingBottomRight: [60, 60] } : { paddingTopLeft: [24, 70], paddingBottomRight: [24, 24] };
+  return { paddingTopLeft: [48, 64], paddingBottomRight: [48, 48] };
 }
 
 function popupHtml(title: string, properties: Record<string, unknown>): string {
@@ -225,13 +227,13 @@ function popupHtml(title: string, properties: Record<string, unknown>): string {
     .slice(0, MAX_POPUP_ROWS)
     .map(
       ([k, v]) =>
-        `<tr><td style="padding:2px 12px 2px 0;color:#94a3b8;font-family:var(--font-mono);font-size:11px;vertical-align:top">${escapeHtml(k)}</td><td style="padding:2px 0;color:#e6ebf5">${escapeHtml(formatValue(v))}</td></tr>`,
+        `<tr><td style="padding:2px 12px 2px 0;color:#64748b;font-family:var(--font-mono);font-size:11px;vertical-align:top">${escapeHtml(k)}</td><td style="padding:2px 0;color:#0f172a">${escapeHtml(formatValue(v))}</td></tr>`,
     )
     .join("");
-  const more = entries.length > MAX_POPUP_ROWS ? `<p style="margin:6px 0 0;color:#94a3b8">+ ${entries.length - MAX_POPUP_ROWS} more</p>` : "";
-  return `<div style="font-weight:600;font-size:13px;margin-bottom:6px;color:#ffd27a;font-family:var(--font-mono)">${escapeHtml(title)}</div>
-<div style="color:#94a3b8;font-size:11px;margin-bottom:6px">Polygon ${Number(__i) + 1}</div>
-${rows ? `<table>${rows}</table>` : `<p style="color:#94a3b8">No attributes in the file</p>`}${more}`;
+  const more = entries.length > MAX_POPUP_ROWS ? `<p style="margin:6px 0 0;color:#64748b">+ ${entries.length - MAX_POPUP_ROWS} more</p>` : "";
+  return `<div style="font-weight:700;font-size:13px;margin-bottom:2px;color:#0369a1;font-family:var(--font-mono)">${escapeHtml(title)}</div>
+<div style="color:#64748b;font-size:11px;margin-bottom:8px">Polygon ${Number(__i) + 1}</div>
+${rows ? `<table>${rows}</table>` : `<p style="color:#64748b">No attributes in the file</p>`}${more}`;
 }
 
 function formatValue(value: unknown): string {

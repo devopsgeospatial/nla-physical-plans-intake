@@ -36,6 +36,7 @@ async function main() {
   │  LOCAL TEST MODE (ArcGIS emulator, nothing reaches ArcGIS)      │
   │  Intake app:         ${APP_URL.padEnd(41)}│
   │  Emulator / records: ${`http://localhost:${EMULATOR_PORT}/`.padEnd(41)}│
+  │  Test sign-in:       ${"planner.muhanga / rla-test".padEnd(41)}│
   └───────────────────────────────────────────────────────────────┘
 `);
 

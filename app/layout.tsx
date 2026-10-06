@@ -7,11 +7,11 @@ const sans = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-jakarta",
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Physical Plans · Upload",
+  title: "Physical Plan Submission",
   description: "Append physical plan parcels, with their attributes and documents, to the Physical Plans layer.",
 };
 
-export const viewport: Viewport = { themeColor: "#070b14" };
+export const viewport: Viewport = { themeColor: "#04070d" };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

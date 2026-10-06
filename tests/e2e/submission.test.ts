@@ -113,10 +113,41 @@ const PDF: UploadPart = ["samples/sample-plan-document.pdf", "application/pdf"];
 
 describe("append to Physical_Plans (production build vs ArcGIS emulator)", () => {
   it("shows the sign-in screen and refuses anonymous uploads", async () => {
-    assert.match(await (await fetch(APP)).text(), /Sign in with ArcGIS/);
+    const signInPage = await (await fetch(APP)).text();
+    assert.match(signInPage, /Sign in to ArcGIS Online/);
+    assert.match(signInPage, /name="password"/);
     const res = await fetch(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE }) });
     assert.equal(res.status, 401);
     assert.equal((await res.json()).signInRequired, true);
+  });
+
+  it("signs in with username and password (wrong password, Viewer and non-member refused)", async () => {
+    const tryPassword = async (username: string, password: string, origin = APP) => {
+      const browser = new Browser();
+      const res = await browser.request(`${APP}/api/auth/password`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin },
+        body: new URLSearchParams({ username, password }).toString(),
+      });
+      assert.equal(res.status, 303);
+      return { browser, location: new URL(res.headers.get("location")!) };
+    };
+
+    const ok = await tryPassword("planner.muhanga", "rla-test");
+    assert.equal(ok.location.search, "");
+    assert.equal(ok.browser.signedIn, true);
+    const page = await (await ok.browser.get(APP)).text();
+    assert.match(page, /Physical Plan Submission/);
+    assert.match(page, /Muhanga Planner/);
+
+    const wrong = await tryPassword("planner.muhanga", "nope");
+    assert.equal(wrong.location.searchParams.get("auth_error"), "Wrong username or password.");
+    assert.equal(wrong.location.searchParams.get("u"), "planner.muhanga", "username is kept for the retry");
+    assert.equal(wrong.browser.signedIn, false);
+
+    assert.match((await tryPassword("viewer.only", "rla-test")).location.searchParams.get("auth_error") ?? "", /Edit features/);
+    assert.match((await tryPassword("outsider", "rla-test")).location.searchParams.get("auth_error") ?? "", /not a member/);
+    assert.match((await tryPassword("planner.muhanga", "rla-test", "https://evil.example")).location.searchParams.get("auth_error") ?? "", /another site/);
   });
 
   it("refuses a Viewer account, a user outside the group, and a forged OAuth state", async () => {
@@ -131,7 +162,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal((await planner.signIn("planner.muhanga")).pathname, "/");
     const page = await (await planner.get(APP)).text();
     assert.match(page, /Muhanga Planner/);
-    assert.match(page, /Upload a plan/);
+    assert.match(page, /Physical Plan Submission[\s\S]*Plan file/);
 
     const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE, documents: PDF }) });
     const body = await res.json();

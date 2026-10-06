@@ -92,7 +92,7 @@ export async function getCommunitySelf(config: ArcGisConfig, token: string): Pro
   );
 }
 
-function assertMayUseApp(config: ArcGisConfig, self: CommunitySelf): void {
+export function assertMayUseApp(config: ArcGisConfig, self: CommunitySelf): void {
   if (config.allowedGroupId && !self.groups?.some((g) => g.id === config.allowedGroupId)) {
     throw new SignInError(
       `${self.username} is not a member of the plan submission group. Ask your ArcGIS administrator to add you.`,
@@ -128,6 +128,11 @@ export function createUserTokenProvider(
     },
     async getToken() {
       if (!forceRefresh && session.accessExpiresAt - REFRESH_MARGIN_MS > Date.now()) return session.accessToken;
+      // Username/password sign-ins have no refresh token: the session simply ends with the token.
+      if (!session.refreshToken) {
+        if (!forceRefresh && session.accessExpiresAt > Date.now()) return session.accessToken;
+        throw new SessionExpiredError();
+      }
       forceRefresh = false;
       try {
         const res = await arcgisRequest<OAuthTokenResponse>(

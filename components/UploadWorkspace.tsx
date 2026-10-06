@@ -22,7 +22,7 @@ import {
 
 const UploadPreviewMap = dynamic(() => import("./UploadPreviewMap"), {
   ssr: false,
-  loading: () => <div className="absolute inset-0 bg-ink-900" />,
+  loading: () => <div className="absolute inset-0 bg-night-2" />,
 });
 
 export interface LayerSummary {
@@ -199,304 +199,292 @@ export default function UploadWorkspace({
   }
 
   return (
-    <main className="relative flex min-h-dvh flex-col lg:block lg:h-dvh lg:overflow-hidden">
-      {/* Map: full-bleed on desktop, top half on small screens */}
-      <div className="relative h-[46dvh] lg:absolute lg:inset-0 lg:h-auto">
-        <UploadPreviewMap
-          features={parsed?.features ?? null}
-          labels={parsed?.features.map(featureLabel) ?? []}
-          hovered={hovered}
-          selected={selected}
-          onSelect={setSelected}
-          appended={done}
-          skipped={skipped}
-        />
-      </div>
-
-      {/* Top bar */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex items-start justify-between gap-3 p-3 sm:p-4">
-        <div className="glass pointer-events-auto flex items-center gap-3 rounded-2xl py-2 pl-2 pr-4">
+    <div className="flex h-dvh flex-col bg-night">
+      {/* Header */}
+      <header className="relative z-[1001] flex h-16 shrink-0 items-center justify-between gap-4 border-b border-ice/15 bg-night px-4 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
           <BrandMark className="size-9" />
-          <div className="leading-tight">
-            <p className="text-sm font-semibold">Physical Plans</p>
-            <p className="flex items-center gap-1 text-[11px] text-slate-400">
+          <div className="min-w-0 leading-tight">
+            <h1 className="truncate text-[15px] font-semibold tracking-tight text-white sm:text-base">Physical Plan Submission</h1>
+            <p className="flex items-center gap-1.5 truncate text-[11px] text-ice/70">
               <IconLayers width={12} height={12} /> {layer.name} · {portalHost}
             </p>
           </div>
         </div>
-        <div className="glass pointer-events-auto flex items-center gap-2 rounded-2xl py-1.5 pl-1.5 pr-1.5">
-          <span className="grid size-8 place-items-center rounded-xl bg-gradient-to-br from-sky/80 to-hill/80 text-xs font-bold">
+        <div className="flex items-center gap-3">
+          <div className="hidden text-right leading-tight sm:block">
+            <p className="text-sm font-medium text-white">{user.fullName}</p>
+            <p className="font-mono text-[11px] text-ice/70">{user.username}</p>
+          </div>
+          <span className="grid size-9 place-items-center rounded-full bg-glacier text-xs font-bold text-night ring-2 ring-ice/30">
             {initials(user.fullName)}
           </span>
-          <span className="hidden pr-1 text-sm leading-tight sm:block">
-            <span className="block font-medium">{user.fullName}</span>
-            <span className="block font-mono text-[10px] text-slate-400">{user.username}</span>
-          </span>
           <form action="/api/auth/logout" method="post">
-            <button type="submit" title="Sign out" className="grid size-8 place-items-center rounded-xl text-slate-300 hover:bg-white/10 hover:text-white">
-              <IconLogout width={17} height={17} />
+            <button
+              type="submit"
+              title="Sign out"
+              className="flex h-9 items-center gap-2 rounded-lg border border-white/10 px-3 text-xs font-medium text-slate-300 transition hover:border-ice/40 hover:text-white"
+            >
+              <IconLogout width={15} height={15} />
+              <span className="hidden md:inline">Sign out</span>
             </button>
           </form>
         </div>
       </header>
 
-      {/* Upload panel */}
-      <aside className="glass relative z-[999] flex flex-col rounded-t-3xl lg:absolute lg:bottom-4 lg:left-4 lg:top-[84px] lg:w-[420px] lg:rounded-3xl">
-        <div className="scroll-slim flex-1 space-y-6 overflow-y-auto p-5 sm:p-6">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">Upload a plan</h1>
-            <p className="mt-0.5 text-[13px] text-slate-400">Each polygon is appended to {layer.name} with its own attributes.</p>
-          </div>
+      <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
+        {/* Upload panel: full height, white */}
+        <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col border-r border-slate-200 bg-white shadow-[8px_0_40px_-20px_rgb(4_7_13/0.5)] lg:w-[460px] lg:flex-none">
+          <div className="scroll-slim flex-1 space-y-7 overflow-y-auto px-5 py-6 sm:px-7">
+            <Step n={1} title="Plan file" done={!!parsed}>
+              {upload.kind === "valid" ? (
+                <FileChip name={upload.file.name} size={upload.file.size} onRemove={done ? undefined : reset} />
+              ) : (
+                <DropZone
+                  accept=".zip,.geojson,.json"
+                  onFiles={(files) => files[0] && loadFile(files[0])}
+                  icon={upload.kind === "reading" ? <IconSpinner /> : <IconUpload />}
+                  title={upload.kind === "reading" ? `Reading ${upload.name}…` : "Drop a Shapefile or GeoJSON"}
+                  hint="Zipped .shp + .shx + .dbf + .prj, or .geojson · click to browse"
+                  inputId="file"
+                />
+              )}
+              {upload.kind === "invalid" && (
+                <Callout tone="red" title={`${upload.name} can't be used`}>
+                  {upload.message}
+                </Callout>
+              )}
+            </Step>
 
-          {/* Step 1: file */}
-          <Step n={1} title="Plan file" done={!!parsed}>
-            {upload.kind === "valid" ? (
-              <FileChip name={upload.file.name} size={upload.file.size} onRemove={done ? undefined : reset} />
-            ) : (
-              <DropZone
-                accept=".zip,.geojson,.json"
-                onFiles={(files) => files[0] && loadFile(files[0])}
-                icon={upload.kind === "reading" ? <IconSpinner /> : <IconUpload />}
-                title={upload.kind === "reading" ? `Reading ${upload.name}…` : "Drop a Shapefile or GeoJSON"}
-                hint="Zipped .shp + .shx + .dbf + .prj, or .geojson · click to browse"
-                inputId="file"
-              />
+            {parsed && mapping && (
+              <section className="animate-rise space-y-4">
+                <div className="grid grid-cols-3 gap-2">
+                  <Stat
+                    value={dupCheck.kind === "checking" ? "…" : count.toLocaleString()}
+                    label={dupCheck.kind === "checking" ? "checking…" : `new record${count === 1 ? "" : "s"}`}
+                    accent
+                  />
+                  <Stat value={totalHa >= 100 ? totalHa.toFixed(0) : totalHa.toFixed(2)} label="hectares" />
+                  <Stat value={parsed.vertexCount.toLocaleString()} label="vertices" />
+                </div>
+
+                {dupCheck.kind === "checking" && (
+                  <Note icon={<IconSpinner width={16} height={16} className="text-deep" />}>Checking {layer.name} for parcels that already exist…</Note>
+                )}
+                {dupCheck.kind === "done" && duplicates.size > 0 && (
+                  <Note icon={<IconLayers width={16} height={16} className="text-slate-500" />} title={`${duplicates.size.toLocaleString()} duplicate${duplicates.size === 1 ? "" : "s"} will be skipped`}>
+                    {inLayerCount > 0 && `${inLayerCount.toLocaleString()} already in ${layer.name}`}
+                    {inLayerCount > 0 && inFileCount > 0 && " · "}
+                    {inFileCount > 0 && `${inFileCount.toLocaleString()} repeated in this file`}. Matched by parcel UPI, or identical shape and position. Shown in grey.
+                  </Note>
+                )}
+                {dupCheck.kind === "done" && count === 0 && (
+                  <Callout tone="amber" title="Nothing new in this file">
+                    Every polygon is already in {layer.name}.
+                  </Callout>
+                )}
+                {dupCheck.kind === "error" && (
+                  <Callout tone="amber" title="Couldn't check for duplicates yet">
+                    {dupCheck.message}. Duplicates are still detected and skipped when you submit.
+                  </Callout>
+                )}
+                {parsed.repairCount > 0 && (
+                  <Callout tone="red" title={`${parsed.repairCount} polygon${parsed.repairCount === 1 ? "" : "s"} cross${parsed.repairCount === 1 ? "es" : ""} itself`}>
+                    Shown in red. On submit, ArcGIS repairs {parsed.repairCount === 1 ? "it" : "them"} (Simplify, as in Repair Geometry) before appending.
+                  </Callout>
+                )}
+
+                <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
+                  <ChipRow label="Copied from the file" names={mapping.matched.map((m) => m.layerField.name)} tone="copied" empty="No file fields match the layer" />
+                  {autoFilled.length > 0 && <ChipRow label="Filled automatically" names={autoFilled} tone="auto" />}
+                  {mapping.ignored.length > 0 && <ChipRow label="Not in the layer, ignored" names={mapping.ignored} tone="ignored" />}
+                </div>
+
+                <div className="overflow-hidden rounded-2xl border border-slate-200">
+                  <p className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    Polygons · {total.toLocaleString()}
+                  </p>
+                  <ul className="scroll-slim max-h-64 divide-y divide-slate-100 overflow-y-auto" onMouseLeave={() => setHovered(null)}>
+                    {listOrder.map((i) => {
+                      const f = parsed.features[i]!;
+                      const dup = duplicates.get(i);
+                      return (
+                        <li key={i}>
+                          <button
+                            type="button"
+                            onMouseEnter={() => setHovered(i)}
+                            onClick={() => setSelected(i)}
+                            className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] transition ${
+                              selected === i ? "bg-sky-50" : "hover:bg-slate-50"
+                            } ${dup ? "text-slate-400" : "text-slate-800"}`}
+                          >
+                            <span
+                              className={`grid h-6 min-w-6 shrink-0 place-items-center rounded-md px-1 font-mono text-[10px] font-semibold ${
+                                dup ? "bg-slate-100 text-slate-400" : f.selfIntersection ? "bg-rose-50 text-rose-600" : "bg-night text-ice"
+                              }`}
+                            >
+                              {i + 1}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate font-mono">{featureLabel(f, i)}</span>
+                            {dup ? (
+                              <Badge tone="grey" title={dup.reason === "upi" ? "Same parcel UPI" : "Same shape and position"}>
+                                {dup.existingObjectId !== undefined ? `in layer #${dup.existingObjectId}` : `repeat of ${dup.sameFileAs! + 1}`}
+                              </Badge>
+                            ) : f.selfIntersection ? (
+                              <Badge tone="red">repair</Badge>
+                            ) : (
+                              <span className="shrink-0 font-mono text-[11px] text-slate-400">{formatArea(f.areaSqMeters)}</span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                    {total > listOrder.length && (
+                      <li className="px-4 py-2.5 text-xs text-slate-400">+ {(total - listOrder.length).toLocaleString()} more on the map</li>
+                    )}
+                  </ul>
+                </div>
+
+                {parsed.warnings.length > 0 && (
+                  <Note icon={<IconAlert width={16} height={16} className="text-amber-500" />}>
+                    {parsed.warnings.map((w) => (
+                      <span key={w} className="block">
+                        {w}
+                      </span>
+                    ))}
+                  </Note>
+                )}
+              </section>
             )}
-            {upload.kind === "invalid" && (
-              <Callout tone="red" title={`${upload.name} can't be used`}>
-                {upload.message}
+
+            <Step n={2} title="Attachments" done={documents.length > 0} optional>
+              {!layer.hasAttachments ? (
+                <div className="flex gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-[13px] leading-5 text-slate-500">
+                  <IconLock className="mt-0.5 shrink-0 text-slate-400" width={18} height={18} />
+                  <span>
+                    Attachments are turned off on <b className="font-semibold text-slate-700">{layer.name}</b>. The layer owner can enable them in the
+                    item settings.
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <DropZone
+                    accept=".pdf,application/pdf"
+                    multiple
+                    compact
+                    disabled={done}
+                    onFiles={(files) => setDocuments((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name && p.size === f.size))])}
+                    icon={<IconPaperclip />}
+                    title="Add PDF documents"
+                    hint={count > 1 ? `Attached to all ${count} records` : "Drop or click to browse"}
+                    inputId="documents"
+                  />
+                  {documents.map((d) => (
+                    <FileChip
+                      key={`${d.name}-${d.size}`}
+                      name={d.name}
+                      size={d.size}
+                      onRemove={done ? undefined : () => setDocuments((prev) => prev.filter((p) => p !== d))}
+                    />
+                  ))}
+                </>
+              )}
+            </Step>
+
+            {tooLarge && !done && (
+              <Callout tone="amber" title={`Upload is ${formatSize(totalBytes)}`}>
+                One submission can be at most {formatSize(maxRequestBytes)} (plan file and PDFs together). Remove or compress some PDFs.
               </Callout>
             )}
-          </Step>
 
-          {parsed && mapping && (
-            <div className="animate-rise space-y-4">
-              <div className="grid grid-cols-3 gap-2">
-                <Stat
-                  value={dupCheck.kind === "checking" ? "…" : count.toLocaleString()}
-                  label={dupCheck.kind === "checking" ? "checking…" : `new record${count === 1 ? "" : "s"}`}
-                  accent
-                />
-                <Stat value={totalHa >= 100 ? totalHa.toFixed(0) : totalHa.toFixed(2)} label="hectares" />
-                <Stat value={parsed.vertexCount.toLocaleString()} label="vertices" />
-              </div>
-
-              <div className="space-y-2.5 rounded-2xl border border-line bg-ink-950/40 p-3.5">
-                <ChipRow label="Copied from the file" names={mapping.matched.map((m) => m.layerField.name)} tone="green" empty="No file fields match the layer" />
-                {autoFilled.length > 0 && <ChipRow label="Filled automatically" names={autoFilled} tone="sky" />}
-                {mapping.ignored.length > 0 && <ChipRow label="Not in the layer, ignored" names={mapping.ignored} tone="muted" />}
-              </div>
-
-              {dupCheck.kind === "checking" && (
-                <div className="flex items-center gap-3 rounded-2xl border border-line bg-white/[0.03] p-3.5 text-[13px] text-slate-300">
-                  <IconSpinner width={16} height={16} className="text-sky" /> Checking {layer.name} for parcels that already exist…
-                </div>
-              )}
-              {dupCheck.kind === "done" && duplicates.size > 0 && (
-                <div className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3.5 text-[13px] leading-5 text-slate-200">
-                  <IconLayers className="mt-0.5 shrink-0 text-slate-400" width={16} height={16} />
-                  <div>
-                    <p className="font-semibold">
-                      {duplicates.size.toLocaleString()} duplicate{duplicates.size === 1 ? "" : "s"} will be skipped
-                    </p>
-                    <p className="mt-0.5 text-slate-400">
-                      {inLayerCount > 0 && `${inLayerCount.toLocaleString()} already in ${layer.name}`}
-                      {inLayerCount > 0 && inFileCount > 0 && " · "}
-                      {inFileCount > 0 && `${inFileCount.toLocaleString()} repeated in this file`}
-                      . Matched by parcel UPI, or identical shape and position. Shown in grey.
-                    </p>
-                  </div>
-                </div>
-              )}
-              {dupCheck.kind === "done" && count === 0 && (
-                <Callout tone="amber" title="Nothing new in this file">
-                  Every polygon is already in {layer.name}.
-                </Callout>
-              )}
-              {dupCheck.kind === "error" && (
-                <Callout tone="amber" title="Couldn't check for duplicates yet">
-                  {dupCheck.message}. Duplicates are still detected and skipped when you submit.
-                </Callout>
-              )}
-
-              {parsed.repairCount > 0 && (
-                <div className="flex gap-3 rounded-2xl border border-[#ff4d5e]/30 bg-[#ff4d5e]/10 p-3.5 text-[13px] leading-5 text-red-100">
-                  <IconAlert className="mt-0.5 shrink-0 text-[#ff8a95]" width={16} height={16} />
-                  <div>
-                    <p className="font-semibold">
-                      {parsed.repairCount} polygon{parsed.repairCount === 1 ? "" : "s"} cross{parsed.repairCount === 1 ? "es" : ""} itself
-                    </p>
-                    <p className="mt-0.5 opacity-90">
-                      Shown in red. On submit, ArcGIS repairs {parsed.repairCount === 1 ? "it" : "them"} (Simplify, as in Repair Geometry) before
-                      appending. Everything else is appended unchanged.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <ul className="scroll-slim max-h-56 space-y-1 overflow-y-auto pr-1" onMouseLeave={() => setHovered(null)}>
-                {listOrder.map((i) => {
-                  const f = parsed.features[i]!;
-                  const dup = duplicates.get(i);
-                  return (
-                  <li key={i}>
-                    <button
-                      type="button"
-                      onMouseEnter={() => setHovered(i)}
-                      onClick={() => setSelected(i)}
-                      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[13px] transition ${
-                        selected === i ? "bg-plan/15 ring-1 ring-plan/40" : "hover:bg-white/5"
-                      } ${dup ? "opacity-60" : ""}`}
-                    >
-                      <span
-                        className={`grid h-6 min-w-6 shrink-0 place-items-center rounded-lg px-1 font-mono text-[10px] ${
-                          dup ? "bg-white/10 text-slate-400" : f.selfIntersection ? "bg-[#ff4d5e]/20 text-[#ff8a95]" : "bg-plan/15 text-plan"
-                        }`}
-                      >
-                        {i + 1}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate font-mono text-slate-200">{featureLabel(f, i)}</span>
-                      {dup ? (
-                        <span
-                          title={dup.reason === "upi" ? "Same parcel UPI" : "Same shape and position"}
-                          className="shrink-0 rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300"
-                        >
-                          {dup.existingObjectId !== undefined ? `in layer #${dup.existingObjectId}` : `repeat of ${dup.sameFileAs! + 1}`}
-                        </span>
-                      ) : f.selfIntersection ? (
-                        <span className="shrink-0 rounded-md bg-[#ff4d5e]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#ff8a95]">
-                          repair
-                        </span>
-                      ) : (
-                        <span className="shrink-0 font-mono text-[11px] text-slate-500">{formatArea(f.areaSqMeters)}</span>
-                      )}
-                    </button>
-                  </li>
-                  );
-                })}
-                {count > listOrder.length && (
-                  <li className="px-3 py-2 text-xs text-slate-500">+ {(count - listOrder.length).toLocaleString()} more on the map</li>
-                )}
-              </ul>
-
-              {parsed.warnings.length > 0 && (
-                <Callout tone="amber" title="Notes">
-                  {parsed.warnings.map((w) => (
-                    <span key={w} className="block">
-                      {w}
+            <div ref={outcomeRef} className="scroll-mb-6">
+              {submit.kind === "success" && (
+                <div className="animate-rise overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50" role="status">
+                  <div className="flex items-center gap-3 p-4">
+                    <span className="grid size-10 animate-pop place-items-center rounded-full bg-emerald-600 text-white">
+                      <IconCheck width={22} height={22} />
                     </span>
-                  ))}
+                    <div>
+                      <p className="font-semibold text-emerald-950">
+                        {submit.result.objectIds.length.toLocaleString()} record{submit.result.objectIds.length === 1 ? "" : "s"} appended
+                      </p>
+                      <p className="text-[13px] text-emerald-800">
+                        to {submit.result.layerName}
+                        {submit.result.repairedCount > 0 && ` · ${submit.result.repairedCount} repaired`}
+                        {submit.result.duplicates.length > 0 &&
+                          ` · ${submit.result.duplicates.length} duplicate${submit.result.duplicates.length === 1 ? "" : "s"} skipped`}
+                        {submit.result.attachmentsPerFeature > 0 && ` · ${submit.result.attachmentsPerFeature} PDF each`}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="border-t border-emerald-200 px-4 py-2.5 font-mono text-[11px] text-emerald-800">
+                    OBJECTID {formatIdRange(submit.result.objectIds)}
+                  </p>
+                </div>
+              )}
+              {submit.kind === "error" && (
+                <Callout tone="red" title="Nothing was appended">
+                  {submit.failure.error}
+                  {submit.failure.signInRequired && (
+                    <a href="/" className="mt-2 block font-semibold underline">
+                      Sign in again
+                    </a>
+                  )}
+                  {submit.failure.requestId && <span className="mt-2 block font-mono text-[10px] opacity-70">ref {submit.failure.requestId}</span>}
                 </Callout>
               )}
             </div>
-          )}
-
-          {/* Step 2: attachments */}
-          <Step n={2} title="Attachments" done={documents.length > 0} optional>
-            {!layer.hasAttachments ? (
-              <div className="flex gap-3 rounded-2xl border border-dashed border-white/10 p-4 text-[13px] text-slate-400">
-                <IconLock className="mt-0.5 shrink-0 text-slate-500" width={18} height={18} />
-                <span>
-                  Attachments are turned off on <b className="font-medium text-slate-300">{layer.name}</b>. The layer owner can enable them in the item
-                  settings.
-                </span>
-              </div>
-            ) : (
-              <>
-                <DropZone
-                  accept=".pdf,application/pdf"
-                  multiple
-                  compact
-                  disabled={done}
-                  onFiles={(files) => setDocuments((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name && p.size === f.size))])}
-                  icon={<IconPaperclip />}
-                  title="Add PDF documents"
-                  hint={count > 1 ? `Attached to all ${count} records` : "Drop or click to browse"}
-                  inputId="documents"
-                />
-                {documents.map((d) => (
-                  <FileChip
-                    key={`${d.name}-${d.size}`}
-                    name={d.name}
-                    size={d.size}
-                    onRemove={done ? undefined : () => setDocuments((prev) => prev.filter((p) => p !== d))}
-                  />
-                ))}
-              </>
-            )}
-          </Step>
-
-          {tooLarge && !done && (
-            <Callout tone="amber" title={`Upload is ${formatSize(totalBytes)}`}>
-              One submission can be at most {formatSize(maxRequestBytes)} (plan file and PDFs together). Remove or compress some PDFs.
-            </Callout>
-          )}
-
-          <div ref={outcomeRef} className="scroll-mb-4">
-          {submit.kind === "success" && (
-            <div className="animate-rise rounded-2xl border border-hill/30 bg-hill/10 p-4" role="status">
-              <div className="flex items-center gap-3">
-                <span className="grid size-10 animate-pop place-items-center rounded-full bg-hill text-white">
-                  <IconCheck width={22} height={22} />
-                </span>
-                <div>
-                  <p className="font-semibold">
-                    {submit.result.objectIds.length} record{submit.result.objectIds.length === 1 ? "" : "s"} appended
-                  </p>
-                  <p className="text-[13px] text-slate-300">
-                    to {submit.result.layerName}
-                    {submit.result.repairedCount > 0 && ` · ${submit.result.repairedCount} repaired`}
-                    {submit.result.duplicates.length > 0 && ` · ${submit.result.duplicates.length} duplicate${submit.result.duplicates.length === 1 ? "" : "s"} skipped`}
-                    {submit.result.attachmentsPerFeature > 0 && ` · ${submit.result.attachmentsPerFeature} PDF each`}
-                  </p>
-                </div>
-              </div>
-              <p className="mt-3 font-mono text-[11px] leading-5 text-slate-400">
-                OBJECTID {formatIdRange(submit.result.objectIds)}
-              </p>
-            </div>
-          )}
-          {submit.kind === "error" && (
-            <Callout tone="red" title="Nothing was appended">
-              {submit.failure.error}
-              {submit.failure.signInRequired && (
-                <a href="/api/auth/login" className="mt-2 block font-semibold underline">
-                  Sign in again
-                </a>
-              )}
-              {submit.failure.requestId && <span className="mt-2 block font-mono text-[10px] opacity-70">ref {submit.failure.requestId}</span>}
-            </Callout>
-          )}
           </div>
-        </div>
 
-        {/* Action bar */}
-        <div className="border-t border-line p-4 sm:px-6">
-          {done ? (
-            <button type="button" onClick={reset} className="h-12 w-full rounded-xl border border-white/15 text-sm font-semibold hover:bg-white/5">
-              Upload another plan
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={!canSubmit}
-              className="btn-primary relative flex h-12 w-full items-center justify-center gap-2 overflow-hidden rounded-xl text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
-            >
-              {submit.kind === "submitting" && <span className="shimmer absolute inset-0" aria-hidden />}
-              {submit.kind === "submitting" ? <IconSpinner width={18} height={18} /> : <IconUpload width={18} height={18} />}
-              {submit.kind === "submitting"
-                ? "Appending…"
-                : dupCheck.kind === "checking"
-                  ? "Checking for duplicates…"
-                  : parsed && count > 0
-                    ? `Submit ${count.toLocaleString()} new record${count === 1 ? "" : "s"}`
-                    : "Submit"}
-            </button>
-          )}
+          {/* Action bar */}
+          <div className="border-t border-slate-200 bg-white px-5 py-4 sm:px-7">
+            {done ? (
+              <button
+                type="button"
+                onClick={reset}
+                className="h-12 w-full rounded-xl border border-slate-300 text-sm font-semibold text-slate-800 transition hover:border-deep hover:text-deep"
+              >
+                Upload another plan
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSubmit}
+                disabled={!canSubmit}
+                className="btn-night relative flex h-12 w-full items-center justify-center gap-2 overflow-hidden rounded-xl text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-35 disabled:shadow-none"
+              >
+                {submit.kind === "submitting" && <span className="sheen absolute inset-0" aria-hidden />}
+                {submit.kind === "submitting" ? (
+                  <IconSpinner width={18} height={18} className="text-ice" />
+                ) : (
+                  <IconUpload width={18} height={18} className="text-ice" />
+                )}
+                {submit.kind === "submitting"
+                  ? "Appending…"
+                  : dupCheck.kind === "checking"
+                    ? "Checking for duplicates…"
+                    : parsed && count > 0
+                      ? `Submit ${count.toLocaleString()} new record${count === 1 ? "" : "s"}`
+                      : "Submit"}
+              </button>
+            )}
+          </div>
+        </aside>
+
+        {/* Map */}
+        <div className="relative h-[42dvh] shrink-0 lg:h-auto lg:flex-1">
+          <UploadPreviewMap
+            features={parsed?.features ?? null}
+            labels={parsed?.features.map(featureLabel) ?? []}
+            hovered={hovered}
+            selected={selected}
+            onSelect={setSelected}
+            appended={done}
+            skipped={skipped}
+          />
         </div>
-      </aside>
-    </main>
+      </div>
+    </div>
   );
 }
 
@@ -504,17 +492,17 @@ export default function UploadWorkspace({
 
 function Step({ n, title, done, optional, children }: { n: number; title: string; done?: boolean; optional?: boolean; children: ReactNode }) {
   return (
-    <section className="space-y-2.5">
+    <section className="space-y-3">
       <div className="flex items-center gap-2.5">
         <span
-          className={`grid size-6 place-items-center rounded-full font-mono text-[11px] transition ${
-            done ? "bg-hill text-white" : "bg-white/10 text-slate-300"
+          className={`grid size-6 place-items-center rounded-full font-mono text-[11px] font-semibold transition ${
+            done ? "bg-emerald-600 text-white" : "bg-night text-ice"
           }`}
         >
           {done ? <IconCheck width={14} height={14} /> : n}
         </span>
-        <h2 className="text-sm font-semibold">{title}</h2>
-        {optional && <span className="text-[11px] text-slate-500">optional</span>}
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        {optional && <span className="text-[11px] text-slate-400">optional</span>}
       </div>
       {children}
     </section>
@@ -548,22 +536,20 @@ function DropZone(props: {
       }}
       onDragLeave={() => setOver(false)}
       onDrop={onDrop}
-      className={`group flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed transition ${
-        props.compact ? "p-3.5" : "p-5"
-      } ${over ? "border-sky bg-sky/10" : "border-white/15 bg-white/[0.02] hover:border-sky/60 hover:bg-sky/5"} ${
-        props.disabled ? "pointer-events-none opacity-40" : ""
-      }`}
+      className={`group flex cursor-pointer items-center gap-4 rounded-2xl border-2 border-dashed transition ${props.compact ? "p-3.5" : "p-5"} ${
+        over ? "border-glacier bg-sky-50" : "border-slate-200 bg-slate-50/60 hover:border-glacier hover:bg-sky-50/60"
+      } ${props.disabled ? "pointer-events-none opacity-40" : ""}`}
     >
       <span
-        className={`grid shrink-0 place-items-center rounded-xl bg-sky/15 text-sky transition group-hover:scale-105 ${
+        className={`grid shrink-0 place-items-center rounded-xl bg-night text-ice shadow-[0_8px_20px_-8px_rgb(4_7_13/0.6)] transition group-hover:scale-105 ${
           props.compact ? "size-10" : "size-12"
         }`}
       >
         {props.icon}
       </span>
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-slate-100">{props.title}</span>
-        <span className="block text-xs text-slate-400">{props.hint}</span>
+        <span className="block text-sm font-semibold text-slate-900">{props.title}</span>
+        <span className="block text-xs text-slate-500">{props.hint}</span>
       </span>
       <input
         ref={inputRef}
@@ -584,16 +570,16 @@ function DropZone(props: {
 
 function FileChip({ name, size, onRemove }: { name: string; size: number; onRemove?: () => void }) {
   return (
-    <div className="flex animate-rise items-center gap-3 rounded-2xl border border-line bg-white/[0.03] px-3.5 py-3">
-      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/5 text-slate-300">
+    <div className="flex animate-rise items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm">
+      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-sky-50 text-deep">
         {name.toLowerCase().endsWith(".pdf") ? <IconFile width={18} height={18} /> : <IconPolygon width={18} height={18} />}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{name}</span>
-        <span className="block font-mono text-[11px] text-slate-500">{formatSize(size)}</span>
+        <span className="block truncate text-sm font-semibold text-slate-900">{name}</span>
+        <span className="block font-mono text-[11px] text-slate-400">{formatSize(size)}</span>
       </span>
       {onRemove && (
-        <button type="button" onClick={onRemove} title="Remove" className="grid size-8 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white">
+        <button type="button" onClick={onRemove} title="Remove" className="grid size-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <IconX width={16} height={16} />
         </button>
       )}
@@ -603,25 +589,25 @@ function FileChip({ name, size, onRemove }: { name: string; size: number; onRemo
 
 function Stat({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
   return (
-    <div className={`rounded-2xl border p-3 ${accent ? "border-plan/30 bg-plan/10" : "border-line bg-white/[0.03]"}`}>
-      <p className={`font-mono text-xl font-semibold tracking-tight ${accent ? "text-plan" : "text-white"}`}>{value}</p>
-      <p className="text-[11px] text-slate-400">{label}</p>
+    <div className={`rounded-2xl p-3.5 ${accent ? "bg-night text-white" : "border border-slate-200 bg-white"}`}>
+      <p className={`font-mono text-xl font-semibold tracking-tight ${accent ? "text-ice" : "text-slate-900"}`}>{value}</p>
+      <p className={`text-[11px] ${accent ? "text-slate-400" : "text-slate-500"}`}>{label}</p>
     </div>
   );
 }
 
 const CHIP_TONES = {
-  green: "bg-hill/15 text-emerald-300 ring-hill/30",
-  sky: "bg-sky/15 text-sky-300 ring-sky/30",
-  muted: "bg-white/5 text-slate-400 ring-white/10 line-through decoration-slate-600",
+  copied: "bg-sky-50 text-deep ring-sky-200",
+  auto: "bg-night text-ice ring-night",
+  ignored: "bg-slate-50 text-slate-400 ring-slate-200 line-through decoration-slate-300",
 } as const;
 
 function ChipRow({ label, names, tone, empty }: { label: string; names: string[]; tone: keyof typeof CHIP_TONES; empty?: string }) {
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
       <div className="flex flex-wrap gap-1.5">
-        {names.length === 0 && empty && <span className="text-xs text-amber-300">{empty}</span>}
+        {names.length === 0 && empty && <span className="text-xs text-amber-600">{empty}</span>}
         {names.map((n) => (
           <span key={n} className={`rounded-md px-1.5 py-0.5 font-mono text-[11px] ring-1 ${CHIP_TONES[tone]}`}>
             {n}
@@ -632,11 +618,33 @@ function ChipRow({ label, names, tone, empty }: { label: string; names: string[]
   );
 }
 
+function Badge({ tone, title, children }: { tone: "grey" | "red"; title?: string; children: ReactNode }) {
+  const tones = { grey: "bg-slate-100 text-slate-500", red: "bg-rose-50 text-rose-600" };
+  return (
+    <span title={title} className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function Note({ icon, title, children }: { icon: ReactNode; title?: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3.5 text-[13px] leading-5 text-slate-600">
+      <span className="mt-0.5 shrink-0">{icon}</span>
+      <div>
+        {title && <p className="font-semibold text-slate-900">{title}</p>}
+        <div className={title ? "mt-0.5" : ""}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
 function Callout({ tone, title, children }: { tone: "red" | "amber"; title: string; children: ReactNode }) {
-  const tones = { red: "border-red-400/25 bg-red-500/10 text-red-100", amber: "border-amber-400/25 bg-amber-400/10 text-amber-100" };
+  const tones = { red: "border-rose-200 bg-rose-50 text-rose-900", amber: "border-amber-200 bg-amber-50 text-amber-900" };
+  const icon = { red: "text-rose-500", amber: "text-amber-500" };
   return (
     <div className={`flex animate-rise gap-3 rounded-2xl border p-3.5 text-[13px] leading-5 ${tones[tone]}`} role={tone === "red" ? "alert" : undefined}>
-      <IconAlert className="mt-0.5 shrink-0" width={16} height={16} />
+      <IconAlert className={`mt-0.5 shrink-0 ${icon[tone]}`} width={16} height={16} />
       <div>
         <p className="font-semibold">{title}</p>
         <div className="mt-0.5 opacity-90">{children}</div>

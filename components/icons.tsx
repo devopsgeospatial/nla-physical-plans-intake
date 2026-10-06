@@ -82,6 +82,12 @@ export const IconSpinner = (p: IconProps) => (
     <path d="M12 3a9 9 0 1 0 9 9" />
   </svg>
 );
+export const IconUser = (p: IconProps) => (
+  <svg {...base(p)}>
+    <circle cx="12" cy="8" r="4" />
+    <path d="M4 21a8 8 0 0 1 16 0" />
+  </svg>
+);
 export const IconShield = (p: IconProps) => (
   <svg {...base(p)}>
     <path d="M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3Z" />
@@ -89,13 +95,13 @@ export const IconShield = (p: IconProps) => (
   </svg>
 );
 
-/** Brand mark: a contour-line hill inside a rounded square. */
+/** Brand mark: parcel outlines on a survey grid, light blue on black. */
 export const BrandMark = ({ className = "" }: { className?: string }) => (
-  <span className={`relative grid size-10 place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-sky to-hill ${className}`}>
-    <svg viewBox="0 0 24 24" width={22} height={22} fill="none" stroke="white" strokeWidth={1.7} strokeLinecap="round" aria-hidden>
-      <path d="M3 18c3-6 6-9 9-9s6 3 9 9" />
-      <path d="M6.5 18c2-3.6 3.8-5.4 5.5-5.4S15.5 14.4 17.5 18" opacity={0.75} />
-      <circle cx="17" cy="6.5" r="1.8" fill="#fad201" stroke="none" />
+  <span className={`relative grid size-10 shrink-0 place-items-center rounded-xl bg-night ring-1 ring-ice/40 ${className}`}>
+    <svg viewBox="0 0 24 24" width={22} height={22} fill="none" stroke="#7dd3fc" strokeWidth={1.6} strokeLinejoin="round" aria-hidden>
+      <path d="M4 6.5 11 4l3.5 5.5L9 13 4 6.5Z" />
+      <path d="M14.5 9.5 20 8l-1 8.5-6.5 3.5L9 13" />
+      <path d="M9 13 4.5 15.5 7 20h5.5" opacity={0.55} />
     </svg>
   </span>
 );

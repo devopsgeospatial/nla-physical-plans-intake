@@ -5,33 +5,31 @@
   --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, monospace;
 
-  --color-ink-950: #070b14;
-  --color-ink-900: #0b1120;
-  --color-ink-800: #121a2c;
-  --color-ink-700: #1c2740;
-  --color-ink-600: #2a3754;
-  --color-line: rgb(148 163 184 / 0.14);
+  /* Black + light blue: sign-in, header and primary actions. */
+  --color-night: #04070d;
+  --color-night-2: #0a111d;
+  --color-night-3: #121c2d;
+  --color-ice: #7dd3fc;
+  --color-glacier: #38bdf8;
+  --color-deep: #0369a1;
 
-  /* Rwanda sky blue, sun gold, hill green: used sparingly as accents. */
-  --color-sky: #00a1de;
-  --color-sun: #fad201;
-  --color-hill: #20a35c;
-  --color-plan: #ffb020;
+  /* Map polygon states. */
+  --color-plan: #22d3ee;
+  --color-repair: #f43f5e;
 
-  --animate-rise: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-rise: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   --animate-pop: pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
-  --animate-shimmer: shimmer 1.6s linear infinite;
 }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
 }
 @keyframes pop {
   from { opacity: 0; transform: scale(0.6); }
   to { opacity: 1; transform: none; }
 }
-@keyframes shimmer {
+@keyframes sheen {
   from { background-position: -200% 0; }
   to { background-position: 200% 0; }
 }
@@ -42,103 +40,102 @@ body {
 }
 
 body {
-  background: var(--color-ink-950);
-  color: #e6ebf5;
+  background: var(--color-night);
+  color: #0f172a;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-.glass {
-  background: linear-gradient(180deg, rgb(15 22 38 / 0.86), rgb(10 15 28 / 0.9));
-  backdrop-filter: blur(18px) saturate(1.4);
-  -webkit-backdrop-filter: blur(18px) saturate(1.4);
-  border: 1px solid var(--color-line);
-  box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.65), inset 0 1px 0 rgb(255 255 255 / 0.05);
-}
-
 .scroll-slim {
   scrollbar-width: thin;
-  scrollbar-color: rgb(148 163 184 / 0.25) transparent;
+  scrollbar-color: #cbd5e1 transparent;
 }
 
-.btn-primary {
-  background: linear-gradient(135deg, #00a1de 0%, #20a35c 100%);
-  box-shadow: 0 10px 30px -10px rgb(0 161 222 / 0.7);
-}
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+/* Sign-in backdrop: black with light-blue light and a faint survey grid. */
+.night-backdrop {
+  background:
+    radial-gradient(60rem 40rem at 85% -10%, rgb(56 189 248 / 0.22), transparent 60%),
+    radial-gradient(50rem 35rem at -10% 110%, rgb(3 105 161 / 0.35), transparent 60%),
+    linear-gradient(rgb(125 211 252 / 0.05) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(90deg, rgb(125 211 252 / 0.05) 1px, transparent 1px) 0 0 / 44px 44px,
+    var(--color-night);
 }
 
-.shimmer {
-  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.25), transparent);
+.btn-ice {
+  background: linear-gradient(180deg, #7dd3fc, #38bdf8);
+  color: #04070d;
+  box-shadow: 0 10px 30px -12px rgb(56 189 248 / 0.9), inset 0 1px 0 rgb(255 255 255 / 0.5);
+}
+.btn-ice:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.btn-night {
+  background: linear-gradient(180deg, #121c2d, #04070d);
+  color: #fff;
+  box-shadow: 0 12px 28px -14px rgb(4 7 13 / 0.9), inset 0 1px 0 rgb(125 211 252 / 0.25);
+}
+.btn-night:hover:not(:disabled) {
+  background: linear-gradient(180deg, #172338, #070b14);
+}
+
+.sheen {
+  background: linear-gradient(90deg, transparent, rgb(125 211 252 / 0.35), transparent);
   background-size: 200% 100%;
-  animation: var(--animate-shimmer);
+  animation: sheen 1.6s linear infinite;
 }
 
-/* ---- Leaflet, restyled for the dark UI -------------------------------------------------------- */
+/* ---- Leaflet: white controls to match the panel ----------------------------------------------- */
 .leaflet-container {
-  background: var(--color-ink-900);
+  background: #0a111d;
   font-family: var(--font-sans);
 }
 .leaflet-bar {
-  border: 1px solid var(--color-line) !important;
-  border-radius: 12px !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 10px !important;
   overflow: hidden;
-  box-shadow: 0 10px 30px -10px rgb(0 0 0 / 0.6) !important;
+  box-shadow: 0 8px 24px -10px rgb(4 7 13 / 0.45) !important;
 }
 .leaflet-bar a {
-  background: rgb(15 22 38 / 0.9) !important;
-  color: #e6ebf5 !important;
-  border-bottom-color: var(--color-line) !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  border-bottom-color: #e2e8f0 !important;
   width: 34px !important;
   height: 34px !important;
   line-height: 34px !important;
 }
 .leaflet-bar a:hover {
-  background: var(--color-ink-700) !important;
+  background: #f0f9ff !important;
 }
 .leaflet-control-attribution {
-  background: rgb(7 11 20 / 0.6) !important;
-  color: #94a3b8 !important;
+  background: rgb(255 255 255 / 0.8) !important;
+  color: #475569 !important;
   font-size: 10px !important;
   border-radius: 6px 0 0 0;
 }
-.leaflet-control-attribution a {
-  color: #cbd5e1 !important;
-}
 .leaflet-control-scale-line {
-  background: rgb(7 11 20 / 0.6);
-  color: #cbd5e1;
-  border-color: #cbd5e1;
-}
-.leaflet-popup-content-wrapper,
-.leaflet-popup-tip {
-  background: rgb(12 18 32 / 0.96);
-  color: #e6ebf5;
-  border: 1px solid var(--color-line);
-  box-shadow: 0 20px 50px -15px rgb(0 0 0 / 0.8);
+  background: rgb(255 255 255 / 0.85);
+  color: #0f172a;
+  border-color: #0f172a;
 }
 .leaflet-popup-content-wrapper {
-  border-radius: 14px;
+  border-radius: 12px;
+  box-shadow: 0 20px 50px -15px rgb(4 7 13 / 0.5);
 }
 .leaflet-popup-content {
   margin: 14px 16px;
   font-size: 12px;
 }
-.leaflet-container a.leaflet-popup-close-button {
-  color: #94a3b8;
-}
 .plan-label {
-  background: rgb(7 11 20 / 0.78);
-  border: 1px solid rgb(255 176 32 / 0.6);
-  color: #ffd27a;
+  background: #04070d;
+  border: 1px solid #22d3ee;
+  color: #a5f3fc;
   border-radius: 999px;
-  padding: 1px 8px;
+  padding: 1px 7px;
   font: 700 11px var(--font-mono);
   min-width: 22px;
   text-align: center;
   box-shadow: none;
-  white-space: nowrap;
 }
 .plan-label::before {
   display: none;

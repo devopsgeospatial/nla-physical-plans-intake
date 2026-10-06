@@ -3,6 +3,7 @@
  * before the OAuth app and real layer exist. It implements just the REST surface the app uses:
  *
  *   /portal/sharing/rest/oauth2/authorize|token|revokeToken   (PKCE verified)
+ *   /portal/sharing/rest/generateToken                        (username/password; password: EMULATOR_PASSWORD)
  *   /portal/sharing/rest/community/self, /portal/sharing/rest/portals/self (helper geometry service)
  *   /arcgis/rest/services/Utilities/Geometry/GeometryServer/simplify  (returns the rings unchanged; counts calls)
  *   /arcgis/rest/services/Physical_Plans/FeatureServer/0  (+ applyEdits, query,
@@ -25,6 +26,7 @@ export const EMULATOR_PORTAL_URL = `${ORIGIN}/portal`;
 const LAYER_PATH = "/arcgis/rest/services/Physical_Plans/FeatureServer/0";
 export const EMULATOR_LAYER_URL = `${ORIGIN}${LAYER_PATH}`;
 export const EMULATOR_GROUP_ID = "devplansubmitters";
+export const EMULATOR_PASSWORD = "rla-test";
 
 /** Same custom grid as the real Physical_Plans reference layer (TM Rwanda / ITRF2005). */
 const TM_RWANDA_WKT =
@@ -218,6 +220,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       return sendJson(res, issueAccessToken(username));
     }
     return sendJson(res, arcgisError(400, "Unsupported grant_type"));
+  }
+
+  // Username/password sign-in. Every test account's password is EMULATOR_PASSWORD; errors match ArcGIS Online.
+  if (path === "/portal/sharing/rest/generateToken") {
+    const user = TEST_USERS.find((u) => u.username === params.get("username"));
+    if (!user || params.get("password") !== EMULATOR_PASSWORD) {
+      return sendJson(res, { error: { code: 400, message: "Unable to generate token.", details: ["Invalid username or password."] } });
+    }
+    if (params.get("client") !== "referer" || !params.get("referer")) return sendJson(res, arcgisError(400, "Unable to generate token."));
+    const issued = issueAccessToken(user.username);
+    return sendJson(res, { token: issued.access_token, expires: Date.now() + issued.expires_in * 1000, ssl: false });
   }
 
   if (path === "/portal/sharing/rest/oauth2/revokeToken") {
