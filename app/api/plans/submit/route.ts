@@ -48,7 +48,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const result = await appendFeatures({ ...(await readUpload(form, limits)), username: session.username }, tokens);
     console.info(
-      `[append:${requestId}] ${session.username} appended ${result.objectIds.length} feature(s) to ${result.layerName}, skipped ${result.duplicates.length} duplicate(s), ${result.attachmentsPerFeature} PDF(s) each`,
+      `[append:${requestId}] ${session.username} appended ${result.objectIds.length} feature(s) to ${result.layerName}, skipped ${result.duplicates.length} duplicate(s), ${result.attachments ? `${result.attachments.count} PDF(s) on OBJECTID ${result.attachments.objectId}` : "no PDFs"}`,
     );
 
     const response = NextResponse.json({ ok: true, requestId, ...result }, { status: 201 });

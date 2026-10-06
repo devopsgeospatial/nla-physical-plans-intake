@@ -36,7 +36,7 @@ interface AppendSuccess {
   requestId: string;
   layerName: string;
   objectIds: number[];
-  attachmentsPerFeature: number;
+  attachments: { objectId: number; count: number } | null;
   repairedCount: number;
   duplicates: DuplicateMatch[];
 }
@@ -120,6 +120,9 @@ export default function UploadWorkspace({
   const count = total - duplicates.size; // polygons that will actually be appended
   const inLayerCount = [...duplicates.values()].filter((d) => d.existingObjectId !== undefined).length;
   const inFileCount = duplicates.size - inLayerCount;
+  // The PDFs go on the first record that will be appended (first non-duplicate in file order).
+  const firstNewIndex = parsed ? parsed.features.findIndex((_, i) => !skipped.has(i)) : -1;
+  const firstNewLabel = parsed && firstNewIndex >= 0 ? `${firstNewIndex + 1} · ${featureLabel(parsed.features[firstNewIndex]!, firstNewIndex)}` : "";
   const listOrder = useMemo(() => {
     if (!parsed) return [];
     const indexes = parsed.features.map((_, i) => i);
@@ -326,6 +329,11 @@ export default function UploadWorkspace({
                               {i + 1}
                             </span>
                             <span className="min-w-0 flex-1 truncate font-mono">{featureLabel(f, i)}</span>
+                            {i === firstNewIndex && documents.length > 0 && (
+                              <span title="The PDFs are attached to this record" className="shrink-0 text-deep">
+                                <IconPaperclip width={14} height={14} />
+                              </span>
+                            )}
                             {dup ? (
                               <Badge tone="grey" title={dup.reason === "upi" ? "Same parcel UPI" : "Same shape and position"}>
                                 {dup.existingObjectId !== undefined ? `in layer #${dup.existingObjectId}` : `repeat of ${dup.sameFileAs! + 1}`}
@@ -376,7 +384,7 @@ export default function UploadWorkspace({
                     onFiles={(files) => setDocuments((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name && p.size === f.size))])}
                     icon={<IconPaperclip />}
                     title="Add PDF documents"
-                    hint={count > 1 ? `Attached to all ${count} records` : "Drop or click to browse"}
+                    hint={count > 1 ? `Attached to the first record (${firstNewLabel}) only` : "Drop or click to browse"}
                     inputId="documents"
                   />
                   {documents.map((d) => (
@@ -413,7 +421,8 @@ export default function UploadWorkspace({
                         {submit.result.repairedCount > 0 && ` · ${submit.result.repairedCount} repaired`}
                         {submit.result.duplicates.length > 0 &&
                           ` · ${submit.result.duplicates.length} duplicate${submit.result.duplicates.length === 1 ? "" : "s"} skipped`}
-                        {submit.result.attachmentsPerFeature > 0 && ` · ${submit.result.attachmentsPerFeature} PDF each`}
+                        {submit.result.attachments &&
+                          ` · ${submit.result.attachments.count} PDF${submit.result.attachments.count === 1 ? "" : "s"} on #${submit.result.attachments.objectId}`}
                       </p>
                     </div>
                   </div>

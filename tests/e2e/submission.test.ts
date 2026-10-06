@@ -169,6 +169,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal(res.status, 201, JSON.stringify(body));
     assert.equal(body.objectIds.length, 3);
     assert.deepEqual(body.ignoredFields, ["surveyor"]);
+    assert.deepEqual(body.attachments, { objectId: body.objectIds[0], count: 1 });
     assert.ok(body.matchedFields.some((m: { file: string; layer: string }) => m.file === "planning_s" && m.layer === "planning_status"));
 
     const stored = (await records()).filter((r) => body.objectIds.includes(r.OBJECTID));
@@ -181,7 +182,8 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
       assert.ok(typeof r.created_date === "number" && Date.now() - r.created_date < 60_000);
       assert.ok(Math.abs((r.area_sqm as number) - 2700) < 0.5, `area_sqm ${r.area_sqm} (60 m x 45 m parcel)`);
       assert.equal("surveyor" in r, false);
-      assert.deepEqual(r.attachments, ["sample-plan-document.pdf"]);
+      // The PDF goes on the first appended record only; the others stay without attachments.
+      assert.deepEqual(r.attachments, r.OBJECTID === body.objectIds[0] ? ["sample-plan-document.pdf"] : []);
       const [x, y] = r.geometry.rings[0]![0]!;
       assert.ok(x! > 474000 && x! < 474400 && y! > 4768900 && y! < 4769100, `stored in TM Rwanda: ${x}, ${y}`);
     }

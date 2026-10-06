@@ -29,7 +29,8 @@ export interface AppendResult {
   layerUrl: string;
   layerName: string;
   objectIds: number[];
-  attachmentsPerFeature: number;
+  /** The PDFs are attached to one record only: the first one appended (first non-duplicate in file order). */
+  attachments: { objectId: number; count: number } | null;
   /** Polygons that were self-intersecting and repaired with ArcGIS Simplify before appending. */
   repairedCount: number;
   /** Polygons skipped because they are already in the layer or repeat an earlier polygon in the file. */
@@ -83,7 +84,7 @@ const ATTACHMENT_CONCURRENCY = 4;
 
 /**
  * Appends every polygon in the upload as its own feature, as the signed-in user, carrying the
- * file's attributes. Attaches the PDFs to each new feature. All-or-nothing: on any failure the
+ * file's attributes. Attaches the PDFs to the first new feature only. All-or-nothing: on any failure the
  * features already created are deleted again.
  */
 export async function appendFeatures(request: AppendRequest, tokens: TokenProvider): Promise<AppendResult> {
@@ -156,7 +157,9 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
       }
     }
 
-    const jobs = objectIds.flatMap((oid) => request.documents.map((doc) => () => layer.addAttachment(oid, doc.file, doc.fileName)));
+    // PDFs go on the first appended record only; the other records get no attachments.
+    const firstObjectId = objectIds[0]!;
+    const jobs = request.documents.map((doc) => () => layer.addAttachment(firstObjectId, doc.file, doc.fileName));
     await runWithConcurrency(jobs, ATTACHMENT_CONCURRENCY);
   } catch (err) {
     if (objectIds.length === 0) throw err;
@@ -181,7 +184,7 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
     layerUrl: config.featureLayerUrl,
     layerName: meta.name,
     objectIds,
-    attachmentsPerFeature: request.documents.length,
+    attachments: request.documents.length > 0 ? { objectId: objectIds[0]!, count: request.documents.length } : null,
     repairedCount: toRepair.length,
     duplicates,
     matchedFields: mapping.matched.map((m) => ({ file: m.fileField, layer: m.layerField.name })),
