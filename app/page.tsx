@@ -1,10 +1,10 @@
 import { cookies } from "next/headers";
-import PlanIntakeForm from "@/components/PlanIntakeForm";
-import SetupLayerPanel from "@/components/SetupLayerPanel";
+import UploadForm, { type LayerSummary } from "@/components/UploadForm";
 import { ConfigurationError, getArcGisConfig, type ArcGisConfig } from "@/lib/arcgis/config";
+import { FeatureLayerClient } from "@/lib/arcgis/feature-layer";
+import { ArcGisRequestError } from "@/lib/arcgis/rest";
 import { createUserTokenProvider } from "@/lib/auth/oauth";
 import { readSession, SESSION_COOKIE, type UserSession } from "@/lib/auth/session";
-import { checkLayerStatus, type LayerStatus } from "@/lib/plans/layer-status";
 
 export const dynamic = "force-dynamic";
 
@@ -28,25 +28,30 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ a
     );
   }
 
-  let status: LayerStatus | { state: "error"; message: string };
+  // Read the target layer as the signed-in user: its fields drive the attribute matching preview.
+  let layer: LayerSummary;
   try {
-    status = await checkLayerStatus(createUserTokenProvider(config, session));
+    const meta = await new FeatureLayerClient(config.featureLayerUrl, createUserTokenProvider(config, session)).getMetadata();
+    layer = {
+      name: meta.name,
+      fields: meta.fields.map(({ name, type, alias, length, editable }) => ({ name, type, alias, length, editable })),
+      hasAttachments: meta.hasAttachments,
+    };
   } catch (err) {
-    status = { state: "error", message: err instanceof Error ? err.message : String(err) };
+    const noAccess = err instanceof ArcGisRequestError && (err.code === 403 || err.code === 499 || err.code === 400);
+    return (
+      <Shell session={session}>
+        <Notice title="The feature layer cannot be opened">
+          <p>{noAccess ? "Your account cannot access the layer, or its URL is wrong." : String(err instanceof Error ? err.message : err)}</p>
+          <p className="mt-2 break-all text-xs">{config.featureLayerUrl}</p>
+        </Notice>
+      </Shell>
+    );
   }
 
   return (
     <Shell session={session}>
-      {status.state === "ready" && <PlanIntakeForm />}
-      {status.state === "missing" && <SetupLayerPanel serviceName={status.serviceName} layerUrl={config.featureLayerUrl} />}
-      {(status.state === "no_access" || status.state === "misconfigured" || status.state === "error") && (
-        <Notice title="The plan submissions layer is not usable yet">
-          <p>{status.message}</p>
-          {status.state === "no_access" && (
-            <p className="mt-2">Ask the layer owner to share it with your group (Plan Submitters) and enable editing.</p>
-          )}
-        </Notice>
-      )}
+      <UploadForm layer={layer} />
     </Shell>
   );
 }
@@ -56,10 +61,8 @@ function Shell({ session, children }: { session?: UserSession; children: React.R
     <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Physical Plan Submission</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Upload the plan boundary and supporting documents. Submissions go straight to the planning review queue.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">Physical Plans Upload</h1>
+          <p className="mt-1 text-sm text-slate-600">Append plan polygons, with their attributes and documents, to the Physical Plans layer.</p>
         </div>
         {session && (
           <form action="/api/auth/logout" method="post" className="flex items-center gap-3 text-sm">
@@ -81,10 +84,8 @@ function Shell({ session, children }: { session?: UserSession; children: React.R
 function SignInCard({ portalHost, authError }: { portalHost: string; authError?: string }) {
   return (
     <section className="max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-medium">Sign in to submit a plan</h2>
-      <p className="mt-1 text-sm text-slate-600">
-        Use your ArcGIS Online account ({portalHost}). Your submissions are recorded under your name.
-      </p>
+      <h2 className="text-lg font-medium">Sign in</h2>
+      <p className="mt-1 text-sm text-slate-600">Use your ArcGIS Online account ({portalHost}). Uploads are recorded under your name.</p>
       {authError && (
         <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800" role="alert">
           {authError}

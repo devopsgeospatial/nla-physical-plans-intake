@@ -4,20 +4,23 @@
  *
  *   /portal/sharing/rest/oauth2/authorize|token|revokeToken   (PKCE verified)
  *   /portal/sharing/rest/community/self
- *   /arcgis/rest/services/Physical_Plan_Submissions/FeatureServer/0  (+ applyEdits, query,
+ *   /arcgis/rest/services/Physical_Plans/FeatureServer/0  (+ applyEdits, query,
  *     {oid}/addAttachment, {oid}/attachments, {oid}/attachments/{id})
  *
- * Data lives in memory and is lost on restart. Browse http://localhost:4100/ to see submissions.
+ * The layer mirrors the real NLA Physical_Plans schema (fields, TM Rwanda WKT, OBJECTID). Like ArcGIS,
+ * applyEdits rejects unknown fields and over-length text. Attachments are enabled unless
+ * EMULATOR_ATTACHMENTS=off (the real layer currently has them off).
+ *
+ * Data lives in memory and is lost on restart. Browse http://localhost:4100/ to see appended records.
  * Nothing in the app imports this file; it is only reached when the app's env points at it.
  */
 import { createHash, randomBytes } from "node:crypto";
 import http from "node:http";
-import { DISTRICTS, LAYER_FIELDS, PLAN_NAME_MAX_LENGTH, PLAN_STATUSES, PLAN_TYPES } from "../../lib/plan-options";
 
 export const EMULATOR_PORT = Number(process.env.EMULATOR_PORT ?? 4100);
 const ORIGIN = `http://localhost:${EMULATOR_PORT}`;
 export const EMULATOR_PORTAL_URL = `${ORIGIN}/portal`;
-const LAYER_PATH = "/arcgis/rest/services/Physical_Plan_Submissions/FeatureServer/0";
+const LAYER_PATH = "/arcgis/rest/services/Physical_Plans/FeatureServer/0";
 export const EMULATOR_LAYER_URL = `${ORIGIN}${LAYER_PATH}`;
 export const EMULATOR_GROUP_ID = "devplansubmitters";
 
@@ -56,34 +59,69 @@ let nextAttachmentId = 1;
 
 const ACCESS_TOKEN_SECONDS = 30 * 60;
 
+const str = (name: string, length = 255) => ({ name, type: "esriFieldTypeString", alias: name, length, nullable: true, editable: true });
+const date = (name: string) => ({ name, type: "esriFieldTypeDate", alias: name, length: 8, nullable: true, editable: true });
+
+/** Same fields as https://services7.arcgis.com/htgaiKX6RV2DDGgK/arcgis/rest/services/Physical_Plans/FeatureServer/0 */
+const FIELDS: { name: string; type: string; alias: string; length?: number; nullable: boolean; editable: boolean }[] = [
+  { name: "OBJECTID", type: "esriFieldTypeOID", alias: "OBJECTID", nullable: false, editable: false },
+  str("plan_id"),
+  str("parcel_upi"),
+  str("gen_lu"),
+  str("zone_code"),
+  str("zoning"),
+  str("planning_status"),
+  date("approval_date"),
+  { name: "area_sqm", type: "esriFieldTypeDouble", alias: "area_sqm", nullable: true, editable: true },
+  str("sl"),
+  str("remarks"),
+  str("created_user"),
+  date("created_date"),
+  str("last_edited_user"),
+  date("last_edited_date"),
+  str("province", 50),
+  str("district_1", 50),
+  str("sector_1", 50),
+  str("cell_1", 50),
+  { name: "Shape__Area", type: "esriFieldTypeDouble", alias: "Shape__Area", nullable: true, editable: false },
+  { name: "Shape__Length", type: "esriFieldTypeDouble", alias: "Shape__Length", nullable: true, editable: false },
+];
+
+const attachmentsEnabled = () => process.env.EMULATOR_ATTACHMENTS !== "off";
+
 function layerJson() {
-  const coded = (name: string, values: readonly string[]) => ({ type: "codedValue", name, codedValues: values.map((v) => ({ name: v, code: v })) });
   return {
     currentVersion: 12,
     id: 0,
-    name: "Physical_Plan_Submissions",
+    name: "Physical_Plans",
     type: "Feature Layer",
     geometryType: "esriGeometryPolygon",
-    objectIdField: "objectid",
-    globalIdField: "globalid",
-    displayField: LAYER_FIELDS.planName,
-    hasAttachments: true,
-    capabilities: "Create,Delete,Query,Update,Editing",
+    objectIdField: "OBJECTID",
+    globalIdField: "",
+    displayField: "plan_id",
+    hasAttachments: attachmentsEnabled(),
+    capabilities: "Create,Delete,Query,Update,Editing,Extract,Append",
     spatialReference: { wkt: TM_RWANDA_WKT },
     extent: { xmin: 473835, ymin: 4768076, xmax: 476364, ymax: 4769925, spatialReference: { wkt: TM_RWANDA_WKT } },
-    fields: [
-      { name: "objectid", type: "esriFieldTypeOID", nullable: false, editable: false },
-      { name: "globalid", type: "esriFieldTypeGlobalID", length: 38, nullable: false, editable: false },
-      { name: LAYER_FIELDS.planName, type: "esriFieldTypeString", length: PLAN_NAME_MAX_LENGTH, nullable: false, editable: true },
-      { name: LAYER_FIELDS.district, type: "esriFieldTypeString", length: 100, nullable: false, editable: true, domain: coded("PlanDistrict", DISTRICTS) },
-      { name: LAYER_FIELDS.planType, type: "esriFieldTypeString", length: 50, nullable: false, editable: true, domain: coded("PlanType", PLAN_TYPES) },
-      { name: LAYER_FIELDS.status, type: "esriFieldTypeString", length: 20, nullable: false, editable: true, domain: coded("PlanStatus", PLAN_STATUSES) },
-      { name: LAYER_FIELDS.submissionDate, type: "esriFieldTypeDate", length: 8, nullable: true, editable: true },
-      { name: LAYER_FIELDS.reviewComments, type: "esriFieldTypeString", length: 4000, nullable: true, editable: true },
-      { name: "Creator", type: "esriFieldTypeString", length: 128, nullable: true, editable: false },
-      { name: "CreationDate", type: "esriFieldTypeDate", length: 8, nullable: true, editable: false },
-    ],
+    fields: FIELDS,
   };
+}
+
+/** ArcGIS-like attribute validation for one add; returns an error description or null. */
+function validateAttributes(attributes: Record<string, unknown>): string | null {
+  for (const [name, value] of Object.entries(attributes)) {
+    const field = FIELDS.find((f) => f.name.toLowerCase() === name.toLowerCase());
+    if (!field) return `Field '${name}' does not exist in the layer.`;
+    if (!field.editable) return `Field '${name}' is not editable.`;
+    if (value === null) continue;
+    if (field.type === "esriFieldTypeString" && (typeof value !== "string" || value.length > (field.length ?? 255))) {
+      return `Value for '${name}' is not a string or exceeds the field length.`;
+    }
+    if ((field.type === "esriFieldTypeDouble" || field.type === "esriFieldTypeDate") && typeof value !== "number") {
+      return `Value for '${name}' must be numeric.`;
+    }
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -200,15 +238,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (sub === "/applyEdits") {
       const adds = JSON.parse(params.get("adds") ?? "[]") as { geometry: unknown; attributes: Record<string, unknown> }[];
       const deletes = JSON.parse(params.get("deletes") ?? "[]") as number[];
+      // rollbackOnFailure semantics: validate everything first, then add all or nothing.
+      const problems = adds.map((add) => validateAttributes(add.attributes ?? {}));
+      if (problems.some(Boolean)) {
+        const rejected = problems.map((problem) => ({
+          objectId: -1,
+          success: false,
+          error: problem ? { code: 1000, description: problem } : { code: 1003, description: "Operation rolled back." },
+        }));
+        return sendJson(res, { addResults: rejected, updateResults: [], deleteResults: [] });
+      }
       const addResults = adds.map((add) => {
         const objectid = nextObjectId++;
-        const globalid = `{${crypto.randomUUID().toUpperCase()}}`;
-        features.set(objectid, {
-          attributes: { ...add.attributes, objectid, globalid, Creator: username, CreationDate: Date.now() },
-          geometry: add.geometry,
-          attachments: [],
-        });
-        return { objectId: objectid, globalId: globalid, success: true };
+        features.set(objectid, { attributes: { ...add.attributes, OBJECTID: objectid }, geometry: add.geometry, attachments: [] });
+        return { objectId: objectid, globalId: null, success: true };
       });
       const deleteResults = deletes.map((oid) => ({ objectId: oid, success: features.delete(oid) }));
       console.log(`[emulator] applyEdits by ${username}: +${addResults.length} -${deleteResults.length}`);
@@ -217,7 +260,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
     if (sub === "/query") {
       const list = [...features.values()].map((f) => ({ attributes: f.attributes, geometry: f.geometry }));
-      return sendJson(res, { objectIdFieldName: "objectid", geometryType: "esriGeometryPolygon", spatialReference: { wkt: TM_RWANDA_WKT }, features: list });
+      return sendJson(res, { objectIdFieldName: "OBJECTID", geometryType: "esriGeometryPolygon", spatialReference: { wkt: TM_RWANDA_WKT }, features: list });
     }
 
     const match = sub.match(/^\/(\d+)\/(addAttachment|attachments)(?:\/(\d+))?$/);
@@ -225,6 +268,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (match && !feature) return sendJson(res, arcgisError(404, `Feature ${match[1]} not found.`));
     if (match && feature) {
       if (match[2] === "addAttachment") {
+        if (!attachmentsEnabled()) return sendJson(res, arcgisError(400, "Attachments are not enabled on this layer."));
         const file = form?.get("attachment");
         if (!(file instanceof File)) return sendJson(res, arcgisError(400, "Missing 'attachment' part."));
         const id = nextAttachmentId++;
@@ -245,6 +289,9 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   // ---- Dev viewer --------------------------------------------------------------------------------
   if (path === "/") return renderIndex(res);
+  if (path === "/records.json") {
+    return sendJson(res, [...features.values()].map((f) => ({ ...f.attributes, attachments: f.attachments.map((x) => x.name), geometry: f.geometry })));
+  }
   const download = path.match(/^\/files\/(\d+)\/(\d+)$/);
   if (download) {
     const att = features.get(Number(download[1]))?.attachments.find((a) => a.id === Number(download[2]));
@@ -262,25 +309,27 @@ function issueAccessToken(username: string) {
 }
 
 function renderIndex(res: http.ServerResponse) {
+  const columns = ["OBJECTID", "plan_id", "parcel_upi", "zoning", "planning_status", "district_1", "sector_1", "area_sqm", "created_user", "created_date"];
+  const cell = (name: string, value: unknown) =>
+    name.endsWith("_date") && typeof value === "number" ? new Date(value).toISOString().slice(0, 16).replace("T", " ") : escapeHtml(value);
   const rows = [...features.values()]
-    .sort((a, b) => Number(b.attributes.objectid) - Number(a.attributes.objectid))
+    .sort((a, b) => Number(b.attributes.OBJECTID) - Number(a.attributes.OBJECTID))
     .map((f) => {
-      const a = f.attributes;
       const ring = (f.geometry as { rings?: number[][][] }).rings?.[0]?.[0];
-      const docs = f.attachments.map((x) => `<a href="/files/${a.objectid}/${x.id}" target="_blank">${escapeHtml(x.name)}</a>`).join("<br>");
-      return `<tr><td>${a.objectid}</td><td>${escapeHtml(a.plan_name)}</td><td>${escapeHtml(a.district)}</td><td>${escapeHtml(a.plan_type)}</td>
-<td>${escapeHtml(a.status)}</td><td>${escapeHtml(a.Creator)}</td><td>${new Date(Number(a.submission_date)).toLocaleString()}</td>
-<td><small>${ring ? `${ring[0]?.toFixed(1)}, ${ring[1]?.toFixed(1)}` : ""}</small></td><td>${docs}</td></tr>`;
+      const docs = f.attachments.map((x) => `<a href="/files/${f.attributes.OBJECTID}/${x.id}" target="_blank">${escapeHtml(x.name)}</a>`).join("<br>");
+      const vertex = ring ? `${ring[0]?.toFixed(1)}, ${ring[1]?.toFixed(1)}` : "";
+      return `<tr>${columns.map((c) => `<td>${cell(c, f.attributes[c])}</td>`).join("")}<td><small>${vertex}</small></td><td>${docs}</td></tr>`;
     })
     .join("");
+  const empty = `<tr><td colspan="${columns.length + 2}">Nothing appended yet.</td></tr>`;
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(`<!doctype html><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="5"><title>ArcGIS emulator</title>
 <body style="font-family:system-ui;margin:24px;line-height:1.4">
-<p style="background:#fef3c7;padding:8px 12px;border-radius:6px;display:inline-block">Local ArcGIS emulator. In-memory only; refreshes every 5 s.</p>
-<h2>Physical_Plan_Submissions (${features.size})</h2>
-<div style="overflow-x:auto"><table border="1" cellpadding="6" style="border-collapse:collapse;font-size:14px">
-<tr><th>OID</th><th>Plan</th><th>District</th><th>Type</th><th>Status</th><th>Submitted by</th><th>Date</th><th>First vertex (TM Rwanda m)</th><th>PDFs</th></tr>
-${rows || '<tr><td colspan="9">No submissions yet.</td></tr>'}</table></div></body>`);
+<p style="background:#fef3c7;padding:8px 12px;border-radius:6px;display:inline-block">Local ArcGIS emulator. In-memory only; refreshes every 5 s. Attachments: ${attachmentsEnabled() ? "on" : "off"}.</p>
+<h2>Physical_Plans: appended records (${features.size})</h2>
+<div style="overflow-x:auto"><table border="1" cellpadding="6" style="border-collapse:collapse;font-size:13px">
+<tr>${columns.map((c) => `<th>${c}</th>`).join("")}<th>First vertex (TM Rwanda m)</th><th>PDFs</th></tr>
+${rows || empty}</table></div></body>`);
 }
 
 export function startEmulator(): Promise<http.Server> {

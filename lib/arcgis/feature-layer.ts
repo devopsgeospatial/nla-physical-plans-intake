@@ -100,26 +100,30 @@ export class FeatureLayerClient {
     return sr;
   }
 
-  async addFeature(geometry: EsriPolygon, attributes: Record<string, AttributeValue>): Promise<AddedFeature> {
+  /**
+   * Adds features in one applyEdits call with rollbackOnFailure: either all are created or none.
+   * Returns object IDs in input order.
+   */
+  async addFeatures(features: { geometry: EsriPolygon; attributes: Record<string, AttributeValue> }[]): Promise<AddedFeature[]> {
     const url = `${this.layerUrl}/applyEdits`;
     const response = await withToken(this.tokens, (token) =>
-      arcgisRequest<ApplyEditsResponse>(
-        url,
-        { adds: [{ geometry, attributes }], rollbackOnFailure: true },
-        { referer: this.tokens.referer, token },
-      ),
+      arcgisRequest<ApplyEditsResponse>(url, { adds: features, rollbackOnFailure: true }, { referer: this.tokens.referer, token, timeoutMs: 180_000 }),
     );
-
-    const result = response.addResults?.[0];
-    if (!result) throw new ArcGisRequestError("applyEdits returned no addResults.", url);
-    if (!result.success) {
-      throw new ArcGisRequestError(
-        `applyEdits rejected the feature: ${result.error?.description ?? "unknown error"}`,
+    const results = response.addResults ?? [];
+    if (results.length !== features.length) {
+      throw new ArcGisRequestError(`applyEdits returned ${results.length} results for ${features.length} features.`, url);
+    }
+    const failedIndex = results.findIndex((r) => !r.success);
+    if (failedIndex >= 0) {
+      const failed = results[failedIndex]!;
+      throw new FeatureRejectedError(
+        failedIndex,
+        `applyEdits rejected the feature: ${failed.error?.description ?? "unknown error"}`,
         url,
-        result.error?.code,
+        failed.error?.code,
       );
     }
-    return { objectId: result.objectId, globalId: result.globalId ?? null };
+    return results.map((r) => ({ objectId: r.objectId, globalId: r.globalId ?? null }));
   }
 
   async addAttachment(objectId: number, file: Blob, fileName: string): Promise<AddedAttachment> {
@@ -149,19 +153,29 @@ export class FeatureLayerClient {
     };
   }
 
-  /** Compensating delete used to roll back a feature whose attachments could not be stored. */
-  async deleteFeature(objectId: number): Promise<void> {
+  /** Compensating delete used to roll back features whose append could not be completed. */
+  async deleteFeatures(objectIds: number[]): Promise<void> {
+    if (objectIds.length === 0) return;
     const url = `${this.layerUrl}/applyEdits`;
     const response = await withToken(this.tokens, (token) =>
-      arcgisRequest<ApplyEditsResponse>(url, { deletes: [objectId] }, { referer: this.tokens.referer, token }),
+      arcgisRequest<ApplyEditsResponse>(url, { deletes: objectIds }, { referer: this.tokens.referer, token, timeoutMs: 180_000 }),
     );
-    const result = response.deleteResults?.[0];
-    if (!result?.success) {
-      throw new ArcGisRequestError(
-        `Rollback delete of objectId ${objectId} failed: ${result?.error?.description ?? "no deleteResults returned"}`,
-        url,
-        result?.error?.code,
-      );
+    const failed = (response.deleteResults ?? []).filter((r) => !r.success).map((r) => r.objectId);
+    if (failed.length > 0 || (response.deleteResults ?? []).length !== objectIds.length) {
+      throw new ArcGisRequestError(`Rollback could not delete object IDs: ${failed.join(", ") || "unknown"}`, url);
     }
+  }
+}
+
+/** applyEdits refused one feature of a batch (so, with rollbackOnFailure, none were added). */
+export class FeatureRejectedError extends ArcGisRequestError {
+  constructor(
+    readonly featureIndex: number,
+    message: string,
+    url: string,
+    code?: number,
+  ) {
+    super(message, url, code);
+    this.name = "FeatureRejectedError";
   }
 }

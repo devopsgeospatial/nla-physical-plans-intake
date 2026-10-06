@@ -1,11 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ConfigurationError, getArcGisConfig, getUploadLimits, type UploadLimits } from "@/lib/arcgis/config";
+import { FeatureRejectedError } from "@/lib/arcgis/feature-layer";
 import { ArcGisRequestError } from "@/lib/arcgis/rest";
 import { createUserTokenProvider, SessionExpiredError } from "@/lib/auth/oauth";
 import { readSession, SESSION_COOKIE, seal, sessionCookieOptions } from "@/lib/auth/session";
-import { BoundaryValidationError, parseBoundaryFile } from "@/lib/geo/parse-boundary";
-import { isDistrict, isPlanType, PLAN_NAME_MAX_LENGTH } from "@/lib/plan-options";
-import { LayerSchemaError, PartialSubmissionError, submitPlan, type PlanSubmission } from "@/lib/plans/submit-plan";
+import { parseUploadFile, UploadValidationError } from "@/lib/geo/parse-upload";
+import {
+  appendFeatures,
+  AttributeError,
+  LayerSchemaError,
+  PartialSubmissionError,
+  type AppendRequest,
+} from "@/lib/plans/append-features";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,17 +27,17 @@ class RequestValidationError extends Error {
   }
 }
 
+/** Appends the uploaded polygons (with their file attributes) and PDFs to the feature layer. */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const requestId = crypto.randomUUID();
   try {
     const config = getArcGisConfig();
     const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config.sessionSecret);
-    if (!session) throw new SessionExpiredError("Please sign in with your ArcGIS account to submit a plan.");
+    if (!session) throw new SessionExpiredError("Please sign in with your ArcGIS account.");
     const tokens = createUserTokenProvider(config, session);
 
     const limits = getUploadLimits();
     assertContentLength(request, limits);
-
     let form: FormData;
     try {
       form = await request.formData();
@@ -39,13 +45,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       throw new RequestValidationError("Request body must be multipart/form-data.");
     }
 
-    const submission = await readSubmission(form, limits);
-    const result = await submitPlan(submission, tokens);
-
+    const result = await appendFeatures({ ...(await readUpload(form, limits)), username: session.username }, tokens);
     console.info(
-      `[plans:${requestId}] ${session.username} created objectId=${result.objectId} attachments=${result.attachments.length}`,
+      `[append:${requestId}] ${session.username} appended ${result.objectIds.length} feature(s) to ${result.layerName}, ${result.attachmentsPerFeature} PDF(s) each`,
     );
-    const response = NextResponse.json({ ok: true, requestId, submittedBy: session.username, ...result }, { status: 201 });
+
+    const response = NextResponse.json({ ok: true, requestId, ...result }, { status: 201 });
     if (tokens.refreshed) {
       response.cookies.set(SESSION_COOKIE, seal(tokens.session, config.sessionSecret), sessionCookieOptions(tokens.session));
     }
@@ -55,50 +60,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 }
 
-async function readSubmission(form: FormData, limits: UploadLimits): Promise<PlanSubmission> {
-  const planName = readText(form, "plan_name");
-  if (planName.length > PLAN_NAME_MAX_LENGTH) {
-    throw new RequestValidationError(`plan_name must be at most ${PLAN_NAME_MAX_LENGTH} characters.`, "plan_name");
+async function readUpload(form: FormData, limits: UploadLimits): Promise<Omit<AppendRequest, "username">> {
+  const file = form.get("file");
+  if (!(file instanceof File) || file.size === 0) throw new RequestValidationError("Choose a Shapefile (.zip) or GeoJSON file.", "file");
+  if (file.size > limits.maxBoundaryBytes) {
+    throw new RequestValidationError(`The file exceeds ${formatBytes(limits.maxBoundaryBytes)}.`, "file", 413);
   }
-  const district = readText(form, "district");
-  if (!isDistrict(district)) throw new RequestValidationError(`Unknown district "${district}".`, "district");
-  const planType = readText(form, "plan_type");
-  if (!isPlanType(planType)) throw new RequestValidationError(`Unknown plan_type "${planType}".`, "plan_type");
+  // The browser preview is advisory only; the server parses and validates the file itself.
+  const upload = await parseUploadFile(file.name, await file.arrayBuffer());
 
-  const boundaryFile = form.get("boundary");
-  if (!(boundaryFile instanceof File) || boundaryFile.size === 0) {
-    throw new RequestValidationError("A boundary file is required.", "boundary");
+  const pdfs = form.getAll("documents").filter((d): d is File => d instanceof File && d.size > 0);
+  if (pdfs.length > limits.maxPdfCount) {
+    throw new RequestValidationError(`At most ${limits.maxPdfCount} PDF attachments are allowed.`, "documents");
   }
-  if (boundaryFile.size > limits.maxBoundaryBytes) {
-    throw new RequestValidationError(`Boundary file exceeds ${formatBytes(limits.maxBoundaryBytes)}.`, "boundary", 413);
-  }
-  // The client preview is advisory only; the server re-parses and validates the geometry itself.
-  const boundary = await parseBoundaryFile(boundaryFile.name, await boundaryFile.arrayBuffer());
-
-  const documents = form.getAll("documents").filter((d): d is File => d instanceof File && d.size > 0);
-  if (documents.length === 0) throw new RequestValidationError("At least one PDF document is required.", "documents");
-  if (documents.length > limits.maxPdfCount) {
-    throw new RequestValidationError(`At most ${limits.maxPdfCount} PDF documents may be attached.`, "documents");
-  }
-
-  const docs: PlanSubmission["documents"] = [];
-  for (const doc of documents) {
-    if (doc.size > limits.maxPdfBytes) {
-      throw new RequestValidationError(`"${doc.name}" exceeds ${formatBytes(limits.maxPdfBytes)}.`, "documents", 413);
+  const documents: AppendRequest["documents"] = [];
+  for (const pdf of pdfs) {
+    if (pdf.size > limits.maxPdfBytes) {
+      throw new RequestValidationError(`"${pdf.name}" exceeds ${formatBytes(limits.maxPdfBytes)}.`, "documents", 413);
     }
-    const bytes = new Uint8Array(await doc.arrayBuffer());
-    if (!isPdf(bytes)) throw new RequestValidationError(`"${doc.name}" is not a PDF file.`, "documents", 415);
-    docs.push({ file: new Blob([bytes], { type: "application/pdf" }), fileName: sanitizeFileName(doc.name) });
+    const bytes = new Uint8Array(await pdf.arrayBuffer());
+    if (!isPdf(bytes)) throw new RequestValidationError(`"${pdf.name}" is not a PDF file.`, "documents", 415);
+    documents.push({ file: new Blob([bytes], { type: "application/pdf" }), fileName: sanitizeFileName(pdf.name) });
   }
-
-  return { planName, district, planType, boundary, documents: docs };
-}
-
-function readText(form: FormData, name: string): string {
-  const value = form.get(name);
-  const text = typeof value === "string" ? value.trim() : "";
-  if (!text) throw new RequestValidationError(`${name} is required.`, name);
-  return text;
+  return { upload, documents };
 }
 
 function assertContentLength(request: Request, limits: UploadLimits): void {
@@ -108,16 +92,13 @@ function assertContentLength(request: Request, limits: UploadLimits): void {
 }
 
 function isPdf(bytes: Uint8Array): boolean {
-  // "%PDF-" may be preceded by a little junk in the first 1 KB per the PDF spec's leniency.
-  const head = new TextDecoder("latin1").decode(bytes.subarray(0, 1024));
-  return head.includes("%PDF-");
+  return new TextDecoder("latin1").decode(bytes.subarray(0, 1024)).includes("%PDF-");
 }
 
 function sanitizeFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? "document.pdf";
-  const cleaned = base.replace(/[^\w.\- ()]+/g, "_").replace(/^\.+/, "").slice(0, 120);
-  const withName = cleaned || "document";
-  return withName.toLowerCase().endsWith(".pdf") ? withName : `${withName}.pdf`;
+  const cleaned = base.replace(/[^\w.\- ()]+/g, "_").replace(/^\.+/, "").slice(0, 120) || "document";
+  return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned}.pdf`;
 }
 
 function formatBytes(bytes: number): string {
@@ -134,21 +115,21 @@ function errorResponse(err: unknown, requestId: string): NextResponse {
     return response;
   }
   if (err instanceof RequestValidationError) return body(err.status, err.message, { field: err.field });
-  if (err instanceof BoundaryValidationError) return body(422, err.message, { field: "boundary" });
+  if (err instanceof UploadValidationError || err instanceof AttributeError) return body(422, err.message, { field: "file" });
+  if (err instanceof FeatureRejectedError) return body(422, `ArcGIS rejected the data: ${err.message}`, { field: "file" });
+  if (err instanceof LayerSchemaError) return body(422, err.message);
 
-  console.error(`[plans:${requestId}]`, err);
+  console.error(`[append:${requestId}]`, err);
 
   if (err instanceof PartialSubmissionError) {
-    return body(502, err.message, { objectId: err.objectId, rolledBack: err.rolledBack });
+    return body(502, err.message, { objectIds: err.objectIds, rolledBack: err.rolledBack });
   }
   if (err instanceof ArcGisRequestError && (err.code === 403 || /permission/i.test(err.message))) {
-    return body(403, "Your ArcGIS account does not have edit access to the plan submissions layer. Ask your administrator to share it with you.", { arcgisCode: err.code });
+    return body(403, "Your ArcGIS account does not have edit access to this layer. Ask the layer owner to share it with you.", {
+      arcgisCode: err.code,
+    });
   }
-  if (err instanceof ArcGisRequestError) {
-    return body(502, `ArcGIS Online rejected the request: ${err.message}`, { arcgisCode: err.code });
-  }
-  if (err instanceof ConfigurationError || err instanceof LayerSchemaError) {
-    return body(500, `Server configuration error: ${err.message}`);
-  }
+  if (err instanceof ArcGisRequestError) return body(502, `ArcGIS Online rejected the request: ${err.message}`, { arcgisCode: err.code });
+  if (err instanceof ConfigurationError) return body(500, `Server configuration error: ${err.message}`);
   return body(500, "Unexpected server error. Reference the requestId when reporting this.");
 }

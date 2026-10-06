@@ -21,7 +21,7 @@ jobs:
       - run: npm ci
       - name: Type check
         run: npm run typecheck
-      - name: Unit tests (geometry parsing, Shapefile, projection to TM Rwanda)
+      - name: Unit tests (Shapefile/GeoJSON parsing, attribute mapping, TM Rwanda projection)
         run: npm test
-      - name: Build + end-to-end tests (sign-in, submission, validation vs ArcGIS emulator)
+      - name: Build + end-to-end tests (sign-in, append to Physical_Plans, rollback, validation vs emulator)
         run: npm run test:e2e

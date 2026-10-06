@@ -1,7 +1,8 @@
 /**
- * End-to-end: the production build (`next start`) against the local ArcGIS emulator.
- * Exercises OAuth sign-in (PKCE), access checks, submission with PDF, validation errors and sign-out
- * over real HTTP. Requires `next build` first (npm run test:e2e does both).
+ * End-to-end: the production build (`next start`) against the local ArcGIS emulator, which mirrors
+ * the real Physical_Plans layer. Exercises OAuth sign-in (PKCE), access checks, appending a
+ * Shapefile / GeoJSON with attributes and PDFs, rollback, validation errors and sign-out over real
+ * HTTP. Requires `next build` first (npm run test:e2e does both).
  */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -93,94 +94,127 @@ class Browser {
   }
 }
 
-async function submission(fields: Record<string, string>, files: Record<string, [string, string]>): Promise<FormData> {
+type UploadPart = [path: string, type: string] | [name: string, type: string, content: Blob];
+
+async function upload(parts: Record<string, UploadPart>): Promise<FormData> {
   const form = new FormData();
-  for (const [k, v] of Object.entries(fields)) form.append(k, v);
-  for (const [field, [path, type]] of Object.entries(files)) {
-    form.append(field, new Blob([await readFile(path)], { type }), path.split("/").pop());
+  for (const [field, [path, type, content]] of Object.entries(parts)) {
+    form.append(field, content ?? new Blob([await readFile(path)], { type }), path.split("/").pop());
   }
   return form;
 }
 
-const validFields = { plan_name: "Muhanga Test Plan", district: "Muhanga", plan_type: "Master Plan" };
-const validFiles: Record<string, [string, string]> = {
-  boundary: ["samples/muhanga-test-plan.geojson", "application/geo+json"],
-  documents: ["samples/sample-plan-document.pdf", "application/pdf"],
-};
+type StoredRecord = Record<string, unknown> & { OBJECTID: number; attachments: string[]; geometry: { rings: number[][][] } };
+const records = async (): Promise<StoredRecord[]> => (await fetch(`${emulatorUrl}/records.json`)).json();
 
-describe("plan submission (production build vs ArcGIS emulator)", () => {
-  it("shows the sign-in screen and refuses anonymous submissions", async () => {
-    const page = await (await fetch(APP)).text();
-    assert.match(page, /Sign in with ArcGIS/);
-    const res = await fetch(`${APP}/api/plans/submit`, { method: "POST", body: await submission(validFields, validFiles) });
+const SHAPEFILE: UploadPart = ["samples/muhanga-parcels-tm-rwanda.zip", "application/zip"];
+const GEOJSON: UploadPart = ["samples/muhanga-parcels-wgs84.geojson", "application/geo+json"];
+const PDF: UploadPart = ["samples/sample-plan-document.pdf", "application/pdf"];
+
+describe("append to Physical_Plans (production build vs ArcGIS emulator)", () => {
+  it("shows the sign-in screen and refuses anonymous uploads", async () => {
+    assert.match(await (await fetch(APP)).text(), /Sign in with ArcGIS/);
+    const res = await fetch(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE }) });
     assert.equal(res.status, 401);
     assert.equal((await res.json()).signInRequired, true);
   });
 
-  it("refuses a Viewer account and a user outside the submitters group", async () => {
-    const viewer = new Browser();
-    const v = await viewer.signIn("viewer.only");
-    assert.match(v.searchParams.get("auth_error") ?? "", /Edit features/);
-    assert.equal(viewer.signedIn, false);
-
-    const outsider = new Browser();
-    const o = await outsider.signIn("outsider");
-    assert.match(o.searchParams.get("auth_error") ?? "", /not a member/);
-  });
-
-  it("rejects a tampered OAuth state", async () => {
+  it("refuses a Viewer account, a user outside the group, and a forged OAuth state", async () => {
+    assert.match((await new Browser().signIn("viewer.only")).searchParams.get("auth_error") ?? "", /Edit features/);
+    assert.match((await new Browser().signIn("outsider")).searchParams.get("auth_error") ?? "", /not a member/);
     const res = await fetch(`${APP}/api/auth/callback?code=x&state=forged`, { redirect: "manual" });
     assert.match(new URL(res.headers.get("location")!).searchParams.get("auth_error") ?? "", /could not be verified/);
   });
 
-  it("signs in a planner, submits a plan with a PDF, and stores it in TM Rwanda", async () => {
+  it("appends each Shapefile polygon as its own record, with the file's attributes and the PDF", async () => {
     const planner = new Browser();
-    const landing = await planner.signIn("planner.muhanga");
-    assert.equal(landing.pathname, "/");
-    assert.equal(planner.signedIn, true);
-    assert.match(await (await planner.get(APP)).text(), /Muhanga Planner[\s\S]*Boundary preview/);
+    assert.equal((await planner.signIn("planner.muhanga")).pathname, "/");
+    const page = await (await planner.get(APP)).text();
+    assert.match(page, /Muhanga Planner/);
+    assert.match(page, /Attachments \(PDF\)/);
 
-    const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await submission(validFields, validFiles) });
+    const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE, documents: PDF }) });
     const body = await res.json();
     assert.equal(res.status, 201, JSON.stringify(body));
-    assert.equal(body.submittedBy, "planner.muhanga");
-    assert.equal(body.attributes.status, "SUBMITTED");
-    assert.equal(body.attachments.length, 1);
+    assert.equal(body.objectIds.length, 3);
+    assert.deepEqual(body.ignoredFields, ["surveyor"]);
+    assert.ok(body.matchedFields.some((m: { file: string; layer: string }) => m.file === "planning_s" && m.layer === "planning_status"));
 
-    // Read back from the "ArcGIS" side.
-    const stored = await (await fetch(`${emulatorUrl}/arcgis/rest/services/Physical_Plan_Submissions/FeatureServer/0/query?f=json&token=x`)).json();
-    assert.equal(stored.error?.code, 499, "layer must not be readable without a token");
-    const page = await (await fetch(`${emulatorUrl}/`)).text();
-    assert.match(page, /Muhanga Test Plan[\s\S]*planner\.muhanga[\s\S]*4738\d\d\.\d, 47689\d\d\.\d[\s\S]*sample-plan-document\.pdf/);
-    const pdf = await fetch(`${emulatorUrl}/files/${body.objectId}/${body.attachments[0].attachmentId}`);
-    assert.equal(pdf.headers.get("content-type"), "application/pdf");
-    assert.match(Buffer.from(await pdf.arrayBuffer()).subarray(0, 5).toString(), /%PDF-/);
+    const stored = (await records()).filter((r) => body.objectIds.includes(r.OBJECTID));
+    assert.deepEqual(stored.map((r) => r.parcel_upi).sort(), ["2/01/05/01/2201", "2/01/05/01/2202", "2/01/05/01/2203"]);
+    for (const r of stored) {
+      assert.equal(r.plan_id, "PP-MUH-2026-014");
+      assert.equal(r.planning_status, "Ongoing");
+      assert.equal(r.district_1, "Muhanga");
+      assert.equal(r.created_user, "planner.muhanga");
+      assert.ok(typeof r.created_date === "number" && Date.now() - r.created_date < 60_000);
+      assert.ok(Math.abs((r.area_sqm as number) - 2700) < 0.5, `area_sqm ${r.area_sqm} (60 m x 45 m parcel)`);
+      assert.equal("surveyor" in r, false);
+      assert.deepEqual(r.attachments, ["sample-plan-document.pdf"]);
+      const [x, y] = r.geometry.rings[0]![0]!;
+      assert.ok(x! > 474000 && x! < 474400 && y! > 4768900 && y! < 4769100, `stored in TM Rwanda: ${x}, ${y}`);
+    }
   });
 
-  it("returns field-specific validation errors", async () => {
+  it("appends GeoJSON without attachments", async () => {
     const planner = new Browser();
     await planner.signIn("planner.huye");
-    const post = async (fields: Record<string, string>, files: Record<string, [string, string]>) => {
-      const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await submission(fields, files) });
+    const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: GEOJSON }) });
+    const body = await res.json();
+    assert.equal(res.status, 201, JSON.stringify(body));
+    assert.equal(body.objectIds.length, 3);
+    const stored = (await records()).filter((r) => body.objectIds.includes(r.OBJECTID));
+    assert.ok(stored.every((r) => r.plan_id === "PP-MUH-2026-015" && r.created_user === "planner.huye" && r.attachments.length === 0));
+  });
+
+  it("is all-or-nothing: if an attachment fails, the appended records are removed again", async () => {
+    const planner = new Browser();
+    await planner.signIn("planner.muhanga");
+    const before = (await records()).length;
+    process.env.EMULATOR_ATTACHMENTS = "off"; // the in-process emulator now refuses addAttachment
+    try {
+      const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE, documents: PDF }) });
+      const body = await res.json();
+      assert.equal(res.status, 502, JSON.stringify(body));
+      assert.equal(body.rolledBack, true);
+      assert.match(body.error, /Nothing was appended/);
+    } finally {
+      delete process.env.EMULATOR_ATTACHMENTS;
+    }
+    assert.equal((await records()).length, before);
+  });
+
+  it("rejects invalid files and values, naming the feature and field", async () => {
+    const planner = new Browser();
+    await planner.signIn("planner.huye");
+    const post = async (parts: Record<string, UploadPart>) => {
+      const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload(parts) });
       return { status: res.status, body: await res.json() };
     };
 
-    let r = await post(validFields, { ...validFiles, boundary: ["samples/invalid-self-intersecting.geojson", "application/geo+json"] });
+    let r = await post({ file: ["samples/invalid-self-intersecting.geojson", "application/geo+json"] });
     assert.equal(r.status, 422);
-    assert.equal(r.body.field, "boundary");
     assert.match(r.body.error, /self-intersecting/);
 
-    r = await post(validFields, { ...validFiles, boundary: ["samples/invalid-projected-coordinates.geojson", "application/geo+json"] });
+    r = await post({ file: ["samples/invalid-projected-coordinates.geojson", "application/geo+json"] });
     assert.equal(r.status, 422);
     assert.match(r.body.error, /projected coordinate system/);
 
-    r = await post(validFields, { ...validFiles, documents: ["samples/muhanga-test-plan.geojson", "application/pdf"] });
+    const tooLong = JSON.stringify({
+      type: "FeatureCollection",
+      features: [1, 2].map((i) => ({
+        type: "Feature",
+        properties: { plan_id: `P${i}`, district_1: i === 2 ? "x".repeat(60) : "Muhanga" },
+        geometry: { type: "Polygon", coordinates: [[[29.765, -2.09], [29.766, -2.09], [29.766, -2.089], [29.765, -2.09]]] },
+      })),
+    });
+    r = await post({ file: ["long.geojson", "application/geo+json", new Blob([tooLong])] });
+    assert.equal(r.status, 422);
+    assert.match(r.body.error, /Feature 2, field "district_1".*allows 50/);
+
+    r = await post({ file: SHAPEFILE, documents: ["samples/muhanga-parcels-wgs84.geojson", "application/pdf"] });
     assert.equal(r.status, 415);
     assert.equal(r.body.field, "documents");
-
-    r = await post({ ...validFields, district: "Atlantis" }, validFiles);
-    assert.equal(r.status, 400);
-    assert.equal(r.body.field, "district");
   });
 
   it("signs out and revokes the session", async () => {
@@ -189,7 +223,7 @@ describe("plan submission (production build vs ArcGIS emulator)", () => {
     const res = await planner.request(`${APP}/api/auth/logout`, { method: "POST" });
     assert.equal(res.status, 303);
     assert.equal(planner.signedIn, false);
-    const after = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await submission(validFields, validFiles) });
+    const after = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE }) });
     assert.equal(after.status, 401);
   });
 });

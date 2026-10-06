@@ -1,0 +1,140 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "plan_id": "PP-MUH-2026-015",
+    "parcel_upi": "2/01/05/01/2301",
+    "zone_code": "R1",
+    "zoning": "Low Density Residential",
+    "remarks": "Corner parcel",
+    "gen_lu": "Built_up",
+    "planning_status": "Ongoing",
+    "sl": "Implementation",
+    "province": "Southern Province",
+    "district_1": "Muhanga",
+    "sector_1": "Nyamabuye",
+    "cell_1": "Gahogo",
+    "surveyor": "Field team B"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       29.7707559,
+       -2.0892763
+      ],
+      [
+       29.770756,
+       -2.0888693
+      ],
+      [
+       29.7712954,
+       -2.0888694
+      ],
+      [
+       29.7712953,
+       -2.0892764
+      ],
+      [
+       29.7707559,
+       -2.0892763
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "plan_id": "PP-MUH-2026-015",
+    "parcel_upi": "2/01/05/01/2302",
+    "zone_code": "R1",
+    "zoning": "Low Density Residential",
+    "remarks": "",
+    "gen_lu": "Built_up",
+    "planning_status": "Ongoing",
+    "sl": "Implementation",
+    "province": "Southern Province",
+    "district_1": "Muhanga",
+    "sector_1": "Nyamabuye",
+    "cell_1": "Gahogo",
+    "surveyor": "Field team B"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       29.7712953,
+       -2.0892764
+      ],
+      [
+       29.7712954,
+       -2.0888694
+      ],
+      [
+       29.7718348,
+       -2.0888695
+      ],
+      [
+       29.7718347,
+       -2.0892765
+      ],
+      [
+       29.7712953,
+       -2.0892764
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "plan_id": "PP-MUH-2026-015",
+    "parcel_upi": "2/01/05/01/2303",
+    "zone_code": "C1",
+    "zoning": "Neighbourhood Commercial",
+    "remarks": "Road frontage",
+    "gen_lu": "Built_up",
+    "planning_status": "Ongoing",
+    "sl": "Implementation",
+    "province": "Southern Province",
+    "district_1": "Muhanga",
+    "sector_1": "Nyamabuye",
+    "cell_1": "Gahogo",
+    "surveyor": "Field team B"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       29.7718347,
+       -2.0892765
+      ],
+      [
+       29.7718348,
+       -2.0888695
+      ],
+      [
+       29.7723742,
+       -2.0888695
+      ],
+      [
+       29.7723741,
+       -2.0892765
+      ],
+      [
+       29.7718347,
+       -2.0892765
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}
