@@ -114,7 +114,7 @@ const PDF: UploadPart = ["samples/sample-plan-document.pdf", "application/pdf"];
 describe("append to Physical_Plans (production build vs ArcGIS emulator)", () => {
   it("shows the sign-in screen and refuses anonymous uploads", async () => {
     const signInPage = await (await fetch(APP)).text();
-    assert.match(signInPage, /Sign in to ArcGIS Online/);
+    assert.match(signInPage, /Physical plan submission/i);
     assert.match(signInPage, /name="password"/);
     const res = await fetch(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE }) });
     assert.equal(res.status, 401);
@@ -137,7 +137,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal(ok.location.search, "");
     assert.equal(ok.browser.signedIn, true);
     const page = await (await ok.browser.get(APP)).text();
-    assert.match(page, /Physical Plan Submission/);
+    assert.match(page, /Physical plan submission/i);
     assert.match(page, /Muhanga Planner/);
 
     const wrong = await tryPassword("planner.muhanga", "nope");
@@ -162,7 +162,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal((await planner.signIn("planner.muhanga")).pathname, "/");
     const page = await (await planner.get(APP)).text();
     assert.match(page, /Muhanga Planner/);
-    assert.match(page, /Physical Plan Submission[\s\S]*Plan file/);
+    assert.match(page, /Physical plan submission[\s\S]*Plan file/i);
 
     const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: SHAPEFILE, documents: PDF }) });
     const body = await res.json();

@@ -5,24 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { parseUploadFile, UploadValidationError, type ParsedUpload, type UploadFeature } from "@/lib/geo/parse-upload";
 import { AREA_FIELD, AUTO_FIELDS, mapFields, type LayerFieldInfo } from "@/lib/plans/attribute-mapping";
 import { uploadFingerprints, type DuplicateMatch } from "@/lib/plans/duplicates";
-import {
-  BrandMark,
-  IconAlert,
-  IconCheck,
-  IconFile,
-  IconLayers,
-  IconLock,
-  IconLogout,
-  IconPaperclip,
-  IconPolygon,
-  IconSpinner,
-  IconUpload,
-  IconX,
-} from "./icons";
 
 const UploadPreviewMap = dynamic(() => import("./UploadPreviewMap"), {
   ssr: false,
-  loading: () => <div className="absolute inset-0 bg-night-2" />,
+  loading: () => <div className="absolute inset-0 bg-[#1a1a1a]" />,
 });
 
 export interface LayerSummary {
@@ -201,194 +187,182 @@ export default function UploadWorkspace({
     setSelected(null);
   }
 
+  const statusLine =
+    dupCheck.kind === "checking"
+      ? `Checking ${layer.name} for parcels that already exist…`
+      : dupCheck.kind === "done" && duplicates.size > 0
+        ? `${duplicates.size.toLocaleString()} duplicate${duplicates.size === 1 ? "" : "s"} will be skipped: ${[
+            inLayerCount > 0 ? `${inLayerCount.toLocaleString()} already in ${layer.name}` : "",
+            inFileCount > 0 ? `${inFileCount.toLocaleString()} repeated in this file` : "",
+          ]
+            .filter(Boolean)
+            .join(", ")}.`
+        : null;
+
   return (
-    <div className="flex h-dvh flex-col bg-night">
+    <div className="flex h-dvh flex-col bg-ink">
       {/* Header */}
-      <header className="relative z-[1001] flex h-16 shrink-0 items-center justify-between gap-4 border-b border-ice/15 bg-night px-4 sm:px-6">
-        <div className="flex min-w-0 items-center gap-3">
-          <BrandMark className="size-9" />
-          <div className="min-w-0 leading-tight">
-            <h1 className="truncate text-[15px] font-semibold tracking-tight text-white sm:text-base">Physical Plan Submission</h1>
-            <p className="flex items-center gap-1.5 truncate text-[11px] text-ice/70">
-              <IconLayers width={12} height={12} /> {layer.name} · {portalHost}
-            </p>
-          </div>
+      <header className="relative z-[1001] flex h-14 shrink-0 items-center justify-between gap-4 border-b-2 border-nla bg-ink px-5 text-white sm:px-6">
+        <div className="flex min-w-0 items-baseline gap-4">
+          <h1 className="truncate text-[17px] font-light tracking-[-0.005em]">Physical plan submission</h1>
+          <span className="hidden truncate text-[13px] text-white/45 md:inline">
+            {layer.name} · {portalHost}
+          </span>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="hidden text-right leading-tight sm:block">
-            <p className="text-sm font-medium text-white">{user.fullName}</p>
-            <p className="font-mono text-[11px] text-ice/70">{user.username}</p>
-          </div>
-          <span className="grid size-9 place-items-center rounded-full bg-glacier text-xs font-bold text-night ring-2 ring-ice/30">
+        <div className="flex items-center gap-4">
+          <p className="hidden text-right text-[13px] leading-tight sm:block">
+            <span className="block text-white">{user.fullName}</span>
+            <span className="block text-white/45">{user.username}</span>
+          </p>
+          <span className="grid size-8 place-items-center rounded-full border border-nla-light text-[11px] font-semibold text-nla-light">
             {initials(user.fullName)}
           </span>
           <form action="/api/auth/logout" method="post">
-            <button
-              type="submit"
-              title="Sign out"
-              className="flex h-9 items-center gap-2 rounded-lg border border-white/10 px-3 text-xs font-medium text-slate-300 transition hover:border-ice/40 hover:text-white"
-            >
-              <IconLogout width={15} height={15} />
-              <span className="hidden md:inline">Sign out</span>
+            <button type="submit" className="h-8 rounded-full border border-white/30 px-4 text-[13px] text-white transition hover:border-white">
+              Sign out
             </button>
           </form>
         </div>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
-        {/* Upload panel: full height, white */}
-        <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col border-r border-slate-200 bg-white shadow-[8px_0_40px_-20px_rgb(4_7_13/0.5)] lg:w-[460px] lg:flex-none">
-          <div className="scroll-slim flex-1 space-y-7 overflow-y-auto px-5 py-6 sm:px-7">
-            <Step n={1} title="Plan file" done={!!parsed}>
+        {/* Panel */}
+        <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col bg-paper lg:w-[480px] lg:flex-none">
+          <div className="scroll-slim flex-1 overflow-y-auto">
+            <Section n={1} title="Plan file">
               {upload.kind === "valid" ? (
-                <FileChip name={upload.file.name} size={upload.file.size} onRemove={done ? undefined : reset} />
+                <FileRow name={upload.file.name} size={upload.file.size} onRemove={done ? undefined : reset} />
               ) : (
                 <DropZone
                   accept=".zip,.geojson,.json"
                   onFiles={(files) => files[0] && loadFile(files[0])}
-                  icon={upload.kind === "reading" ? <IconSpinner /> : <IconUpload />}
-                  title={upload.kind === "reading" ? `Reading ${upload.name}…` : "Drop a Shapefile or GeoJSON"}
-                  hint="Zipped .shp + .shx + .dbf + .prj, or .geojson · click to browse"
+                  title={upload.kind === "reading" ? `Reading ${upload.name}…` : "Drop a zipped Shapefile or GeoJSON here"}
+                  hint="The .zip must contain the .shp, .shx, .dbf and .prj files."
                   inputId="file"
                 />
               )}
               {upload.kind === "invalid" && (
-                <Callout tone="red" title={`${upload.name} can't be used`}>
+                <Remark tone="alert" title={`${upload.name} can't be used`}>
                   {upload.message}
-                </Callout>
+                </Remark>
               )}
-            </Step>
+            </Section>
 
             {parsed && mapping && (
-              <section className="animate-rise space-y-4">
-                <div className="grid grid-cols-3 gap-2">
-                  <Stat
-                    value={dupCheck.kind === "checking" ? "…" : count.toLocaleString()}
-                    label={dupCheck.kind === "checking" ? "checking…" : `new record${count === 1 ? "" : "s"}`}
-                    accent
-                  />
-                  <Stat value={totalHa >= 100 ? totalHa.toFixed(0) : totalHa.toFixed(2)} label="hectares" />
-                  <Stat value={parsed.vertexCount.toLocaleString()} label="vertices" />
+              <div className="fade-in">
+                <div className="grid grid-cols-3 divide-x divide-hairline border-b border-hairline">
+                  <Figure value={dupCheck.kind === "checking" ? "–" : count.toLocaleString()} label={`new record${count === 1 ? "" : "s"}`} accent />
+                  <Figure value={totalHa >= 100 ? totalHa.toFixed(0) : totalHa.toFixed(2)} label="hectares" />
+                  <Figure value={parsed.vertexCount.toLocaleString()} label="vertices" />
                 </div>
 
-                {dupCheck.kind === "checking" && (
-                  <Note icon={<IconSpinner width={16} height={16} className="text-deep" />}>Checking {layer.name} for parcels that already exist…</Note>
-                )}
-                {dupCheck.kind === "done" && duplicates.size > 0 && (
-                  <Note icon={<IconLayers width={16} height={16} className="text-slate-500" />} title={`${duplicates.size.toLocaleString()} duplicate${duplicates.size === 1 ? "" : "s"} will be skipped`}>
-                    {inLayerCount > 0 && `${inLayerCount.toLocaleString()} already in ${layer.name}`}
-                    {inLayerCount > 0 && inFileCount > 0 && " · "}
-                    {inFileCount > 0 && `${inFileCount.toLocaleString()} repeated in this file`}. Matched by parcel UPI, or identical shape and position. Shown in grey.
-                  </Note>
-                )}
-                {dupCheck.kind === "done" && count === 0 && (
-                  <Callout tone="amber" title="Nothing new in this file">
-                    Every polygon is already in {layer.name}.
-                  </Callout>
-                )}
-                {dupCheck.kind === "error" && (
-                  <Callout tone="amber" title="Couldn't check for duplicates yet">
-                    {dupCheck.message}. Duplicates are still detected and skipped when you submit.
-                  </Callout>
-                )}
-                {parsed.repairCount > 0 && (
-                  <Callout tone="red" title={`${parsed.repairCount} polygon${parsed.repairCount === 1 ? "" : "s"} cross${parsed.repairCount === 1 ? "es" : ""} itself`}>
-                    Shown in red. On submit, ArcGIS repairs {parsed.repairCount === 1 ? "it" : "them"} (Simplify, as in Repair Geometry) before appending.
-                  </Callout>
-                )}
+                <div className="space-y-4 border-b border-hairline px-6 py-5">
+                  {statusLine && <Remark tone={dupCheck.kind === "checking" ? "info" : "muted"}>{statusLine}</Remark>}
+                  {dupCheck.kind === "done" && count === 0 && (
+                    <Remark tone="warn" title="Nothing new in this file">
+                      Every polygon is already in {layer.name}.
+                    </Remark>
+                  )}
+                  {dupCheck.kind === "error" && (
+                    <Remark tone="warn" title="Duplicates could not be checked yet">
+                      {dupCheck.message}. They are still detected and skipped when you submit.
+                    </Remark>
+                  )}
+                  {parsed.repairCount > 0 && (
+                    <Remark tone="alert" title={`${parsed.repairCount} polygon${parsed.repairCount === 1 ? "" : "s"} cross${parsed.repairCount === 1 ? "es" : ""} itself`}>
+                      Marked in red on the map. ArcGIS repairs {parsed.repairCount === 1 ? "it" : "them"} before appending.
+                    </Remark>
+                  )}
+                  {parsed.warnings.map((w) => (
+                    <Remark key={w} tone="muted">
+                      {w}
+                    </Remark>
+                  ))}
 
-                <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
-                  <ChipRow label="Copied from the file" names={mapping.matched.map((m) => m.layerField.name)} tone="copied" empty="No file fields match the layer" />
-                  {autoFilled.length > 0 && <ChipRow label="Filled automatically" names={autoFilled} tone="auto" />}
-                  {mapping.ignored.length > 0 && <ChipRow label="Not in the layer, ignored" names={mapping.ignored} tone="ignored" />}
+                  <dl className="space-y-3 text-[14px] leading-6">
+                    <FieldLine label={`Copied from the file (${mapping.matched.length})`}>
+                      {mapping.matched.length > 0 ? mapping.matched.map((m) => m.layerField.name).join(", ") : <span className="text-warn">None of the file&apos;s fields match the layer.</span>}
+                    </FieldLine>
+                    {autoFilled.length > 0 && <FieldLine label="Filled in by the app">{autoFilled.join(", ")}</FieldLine>}
+                    {mapping.ignored.length > 0 && (
+                      <FieldLine label="Not in the layer, ignored">
+                        <span className="text-graphite line-through decoration-graphite/40">{mapping.ignored.join(", ")}</span>
+                      </FieldLine>
+                    )}
+                  </dl>
                 </div>
 
-                <div className="overflow-hidden rounded-2xl border border-slate-200">
-                  <p className="border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                    Polygons · {total.toLocaleString()}
-                  </p>
-                  <ul className="scroll-slim max-h-64 divide-y divide-slate-100 overflow-y-auto" onMouseLeave={() => setHovered(null)}>
+                <table className="w-full border-b border-hairline text-left text-[14px]">
+                  <thead>
+                    <tr className="border-b border-hairline text-[12px] text-graphite">
+                      <th className="w-12 py-2.5 pl-6 font-semibold">#</th>
+                      <th className="py-2.5 font-semibold">Parcel</th>
+                      <th className="py-2.5 pr-6 text-right font-semibold">Area</th>
+                    </tr>
+                  </thead>
+                  <tbody onMouseLeave={() => setHovered(null)}>
                     {listOrder.map((i) => {
                       const f = parsed.features[i]!;
                       const dup = duplicates.get(i);
                       return (
-                        <li key={i}>
-                          <button
-                            type="button"
-                            onMouseEnter={() => setHovered(i)}
-                            onClick={() => setSelected(i)}
-                            className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] transition ${
-                              selected === i ? "bg-sky-50" : "hover:bg-slate-50"
-                            } ${dup ? "text-slate-400" : "text-slate-800"}`}
-                          >
-                            <span
-                              className={`grid h-6 min-w-6 shrink-0 place-items-center rounded-md px-1 font-mono text-[10px] font-semibold ${
-                                dup ? "bg-slate-100 text-slate-400" : f.selfIntersection ? "bg-rose-50 text-rose-600" : "bg-night text-ice"
-                              }`}
-                            >
-                              {i + 1}
+                        <tr
+                          key={i}
+                          onMouseEnter={() => setHovered(i)}
+                          onClick={() => setSelected(i)}
+                          className={`cursor-pointer border-b border-hairline/70 transition last:border-0 ${
+                            selected === i ? "bg-nla-tint" : "hover:bg-mist"
+                          } ${dup ? "text-graphite" : "text-ink"}`}
+                        >
+                          <td className="py-2.5 pl-6 tabular-nums text-graphite">{i + 1}</td>
+                          <td className="max-w-0 py-2.5 pr-3">
+                            <span className="block truncate">
+                              {featureLabel(f, i)}
+                              {i === firstNewIndex && documents.length > 0 && <span className="ml-2 text-[12px] text-nla">+ PDF</span>}
                             </span>
-                            <span className="min-w-0 flex-1 truncate font-mono">{featureLabel(f, i)}</span>
-                            {i === firstNewIndex && documents.length > 0 && (
-                              <span title="The PDFs are attached to this record" className="shrink-0 text-deep">
-                                <IconPaperclip width={14} height={14} />
+                            {dup && (
+                              <span className="block text-[12px]">
+                                {dup.existingObjectId !== undefined
+                                  ? `Already in the layer (OBJECTID ${dup.existingObjectId}), skipped`
+                                  : `Repeat of #${dup.sameFileAs! + 1}, skipped`}
                               </span>
                             )}
-                            {dup ? (
-                              <Badge tone="grey" title={dup.reason === "upi" ? "Same parcel UPI" : "Same shape and position"}>
-                                {dup.existingObjectId !== undefined ? `in layer #${dup.existingObjectId}` : `repeat of ${dup.sameFileAs! + 1}`}
-                              </Badge>
-                            ) : f.selfIntersection ? (
-                              <Badge tone="red">repair</Badge>
-                            ) : (
-                              <span className="shrink-0 font-mono text-[11px] text-slate-400">{formatArea(f.areaSqMeters)}</span>
-                            )}
-                          </button>
-                        </li>
+                            {!dup && f.selfIntersection && <span className="block text-[12px] text-alert">Crosses itself, repaired on submit</span>}
+                          </td>
+                          <td className="whitespace-nowrap py-2.5 pr-6 text-right tabular-nums">
+                            {/* A self-crossing shape has no meaningful area until ArcGIS repairs it. */}
+                            {f.selfIntersection ? "–" : formatArea(f.areaSqMeters)}
+                          </td>
+                        </tr>
                       );
                     })}
-                    {total > listOrder.length && (
-                      <li className="px-4 py-2.5 text-xs text-slate-400">+ {(total - listOrder.length).toLocaleString()} more on the map</li>
-                    )}
-                  </ul>
-                </div>
-
-                {parsed.warnings.length > 0 && (
-                  <Note icon={<IconAlert width={16} height={16} className="text-amber-500" />}>
-                    {parsed.warnings.map((w) => (
-                      <span key={w} className="block">
-                        {w}
-                      </span>
-                    ))}
-                  </Note>
+                  </tbody>
+                </table>
+                {total > listOrder.length && (
+                  <p className="border-b border-hairline px-6 py-3 text-[13px] text-graphite">
+                    {(total - listOrder.length).toLocaleString()} more parcels are shown on the map.
+                  </p>
                 )}
-              </section>
+              </div>
             )}
 
-            <Step n={2} title="Attachments" done={documents.length > 0} optional>
+            <Section n={2} title="Attachments" note="optional">
               {!layer.hasAttachments ? (
-                <div className="flex gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-[13px] leading-5 text-slate-500">
-                  <IconLock className="mt-0.5 shrink-0 text-slate-400" width={18} height={18} />
-                  <span>
-                    Attachments are turned off on <b className="font-semibold text-slate-700">{layer.name}</b>. The layer owner can enable them in the
-                    item settings.
-                  </span>
-                </div>
+                <p className="text-[14px] leading-6 text-graphite">
+                  Attachments are turned off on {layer.name}. The layer owner can turn them on in the item settings.
+                </p>
               ) : (
                 <>
                   <DropZone
                     accept=".pdf,application/pdf"
                     multiple
-                    compact
                     disabled={done}
                     onFiles={(files) => setDocuments((prev) => [...prev, ...files.filter((f) => !prev.some((p) => p.name === f.name && p.size === f.size))])}
-                    icon={<IconPaperclip />}
-                    title="Add PDF documents"
-                    hint={count > 1 ? `Attached to the first record (${firstNewLabel}) only` : "Drop or click to browse"}
+                    title="Drop PDF documents here"
+                    hint={count > 1 ? `Attached to the first new record (#${firstNewIndex + 1}) only.` : "PDF only."}
                     inputId="documents"
                   />
                   {documents.map((d) => (
-                    <FileChip
+                    <FileRow
                       key={`${d.name}-${d.size}`}
                       name={d.name}
                       size={d.size}
@@ -397,61 +371,58 @@ export default function UploadWorkspace({
                   ))}
                 </>
               )}
-            </Step>
+            </Section>
 
             {tooLarge && !done && (
-              <Callout tone="amber" title={`Upload is ${formatSize(totalBytes)}`}>
-                One submission can be at most {formatSize(maxRequestBytes)} (plan file and PDFs together). Remove or compress some PDFs.
-              </Callout>
+              <div className="px-6 pt-5">
+                <Remark tone="warn" title={`This upload is ${formatSize(totalBytes)}`}>
+                  One submission can be at most {formatSize(maxRequestBytes)}, plan file and PDFs together. Remove or compress some PDFs.
+                </Remark>
+              </div>
             )}
 
-            <div ref={outcomeRef} className="scroll-mb-6">
+            <div ref={outcomeRef} className="scroll-mb-6 px-6 py-6">
               {submit.kind === "success" && (
-                <div className="animate-rise overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50" role="status">
-                  <div className="flex items-center gap-3 p-4">
-                    <span className="grid size-10 animate-pop place-items-center rounded-full bg-emerald-600 text-white">
-                      <IconCheck width={22} height={22} />
-                    </span>
-                    <div>
-                      <p className="font-semibold text-emerald-950">
-                        {submit.result.objectIds.length.toLocaleString()} record{submit.result.objectIds.length === 1 ? "" : "s"} appended
-                      </p>
-                      <p className="text-[13px] text-emerald-800">
-                        to {submit.result.layerName}
-                        {submit.result.repairedCount > 0 && ` · ${submit.result.repairedCount} repaired`}
-                        {submit.result.duplicates.length > 0 &&
-                          ` · ${submit.result.duplicates.length} duplicate${submit.result.duplicates.length === 1 ? "" : "s"} skipped`}
-                        {submit.result.attachments &&
-                          ` · ${submit.result.attachments.count} PDF${submit.result.attachments.count === 1 ? "" : "s"} on #${submit.result.attachments.objectId}`}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="border-t border-emerald-200 px-4 py-2.5 font-mono text-[11px] text-emerald-800">
-                    OBJECTID {formatIdRange(submit.result.objectIds)}
+                <div className="fade-in border-l-4 border-ok pl-4" role="status">
+                  <p className="text-[22px] font-light leading-tight text-ink">
+                    {submit.result.objectIds.length.toLocaleString()} record{submit.result.objectIds.length === 1 ? "" : "s"} appended to {submit.result.layerName}.
                   </p>
+                  <p className="mt-2 text-[14px] leading-6 text-graphite">
+                    {[
+                      submit.result.duplicates.length > 0 &&
+                        `${submit.result.duplicates.length} duplicate${submit.result.duplicates.length === 1 ? "" : "s"} skipped`,
+                      submit.result.repairedCount > 0 && `${submit.result.repairedCount} repaired`,
+                      submit.result.attachments &&
+                        `${submit.result.attachments.count} PDF${submit.result.attachments.count === 1 ? "" : "s"} attached to OBJECTID ${submit.result.attachments.objectId}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "No duplicates, nothing to repair."}
+                  </p>
+                  <p className="mt-1 text-[13px] text-graphite">OBJECTID {formatIdRange(submit.result.objectIds)}</p>
                 </div>
               )}
               {submit.kind === "error" && (
-                <Callout tone="red" title="Nothing was appended">
+                <Remark tone="alert" title="Nothing was appended">
                   {submit.failure.error}
                   {submit.failure.signInRequired && (
-                    <a href="/" className="mt-2 block font-semibold underline">
+                    <a href="/" className="ml-1 underline underline-offset-2">
                       Sign in again
                     </a>
                   )}
-                  {submit.failure.requestId && <span className="mt-2 block font-mono text-[10px] opacity-70">ref {submit.failure.requestId}</span>}
-                </Callout>
+                  {submit.failure.requestId && <span className="mt-1 block text-[12px] text-graphite">Reference {submit.failure.requestId}</span>}
+                </Remark>
               )}
             </div>
           </div>
 
-          {/* Action bar */}
-          <div className="border-t border-slate-200 bg-white px-5 py-4 sm:px-7">
+          {/* Action */}
+          <div className="relative border-t border-hairline bg-paper px-6 py-4">
+            {submit.kind === "submitting" && <span className="progress-bar absolute inset-x-0 top-0 h-0.5 overflow-hidden" aria-hidden />}
             {done ? (
               <button
                 type="button"
                 onClick={reset}
-                className="h-12 w-full rounded-xl border border-slate-300 text-sm font-semibold text-slate-800 transition hover:border-deep hover:text-deep"
+                className="h-12 w-full rounded-full border border-ink text-[15px] font-semibold text-ink transition hover:bg-ink hover:text-white"
               >
                 Upload another plan
               </button>
@@ -460,14 +431,8 @@ export default function UploadWorkspace({
                 type="button"
                 onClick={onSubmit}
                 disabled={!canSubmit}
-                className="btn-night relative flex h-12 w-full items-center justify-center gap-2 overflow-hidden rounded-xl text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-35 disabled:shadow-none"
+                className="h-12 w-full rounded-full bg-ink text-[15px] font-semibold text-white transition hover:bg-nla disabled:cursor-not-allowed disabled:bg-[#d6d6d6]"
               >
-                {submit.kind === "submitting" && <span className="sheen absolute inset-0" aria-hidden />}
-                {submit.kind === "submitting" ? (
-                  <IconSpinner width={18} height={18} className="text-ice" />
-                ) : (
-                  <IconUpload width={18} height={18} className="text-ice" />
-                )}
                 {submit.kind === "submitting"
                   ? "Appending…"
                   : dupCheck.kind === "checking"
@@ -499,20 +464,14 @@ export default function UploadWorkspace({
 
 // ---------------------------------------------------------------------------------------------------
 
-function Step({ n, title, done, optional, children }: { n: number; title: string; done?: boolean; optional?: boolean; children: ReactNode }) {
+function Section({ n, title, note, children }: { n: number; title: string; note?: string; children: ReactNode }) {
   return (
-    <section className="space-y-3">
-      <div className="flex items-center gap-2.5">
-        <span
-          className={`grid size-6 place-items-center rounded-full font-mono text-[11px] font-semibold transition ${
-            done ? "bg-emerald-600 text-white" : "bg-night text-ice"
-          }`}
-        >
-          {done ? <IconCheck width={14} height={14} /> : n}
-        </span>
-        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
-        {optional && <span className="text-[11px] text-slate-400">optional</span>}
-      </div>
+    <section className="space-y-4 border-b border-hairline px-6 py-6">
+      <h2 className="flex items-baseline gap-3 text-[16px] font-semibold text-ink">
+        <span className="text-[15px] font-light tabular-nums text-nla">{String(n).padStart(2, "0")}</span>
+        {title}
+        {note && <span className="text-[13px] font-normal text-graphite">{note}</span>}
+      </h2>
       {children}
     </section>
   );
@@ -521,10 +480,8 @@ function Step({ n, title, done, optional, children }: { n: number; title: string
 function DropZone(props: {
   accept: string;
   multiple?: boolean;
-  compact?: boolean;
   disabled?: boolean;
   onFiles: (files: File[]) => void;
-  icon: ReactNode;
   title: string;
   hint: string;
   inputId: string;
@@ -545,20 +502,13 @@ function DropZone(props: {
       }}
       onDragLeave={() => setOver(false)}
       onDrop={onDrop}
-      className={`group flex cursor-pointer items-center gap-4 rounded-2xl border-2 border-dashed transition ${props.compact ? "p-3.5" : "p-5"} ${
-        over ? "border-glacier bg-sky-50" : "border-slate-200 bg-slate-50/60 hover:border-glacier hover:bg-sky-50/60"
+      className={`block cursor-pointer rounded-[3px] border border-dashed px-5 py-6 transition ${
+        over ? "border-nla bg-nla-tint" : "border-[#c9c9c9] hover:border-nla"
       } ${props.disabled ? "pointer-events-none opacity-40" : ""}`}
     >
-      <span
-        className={`grid shrink-0 place-items-center rounded-xl bg-night text-ice shadow-[0_8px_20px_-8px_rgb(4_7_13/0.6)] transition group-hover:scale-105 ${
-          props.compact ? "size-10" : "size-12"
-        }`}
-      >
-        {props.icon}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold text-slate-900">{props.title}</span>
-        <span className="block text-xs text-slate-500">{props.hint}</span>
+      <span className="block text-[15px] text-ink">{props.title}</span>
+      <span className="mt-1 block text-[13px] text-graphite">
+        or <span className="text-nla underline underline-offset-2">browse your files</span>. {props.hint}
       </span>
       <input
         ref={inputRef}
@@ -577,87 +527,52 @@ function DropZone(props: {
   );
 }
 
-function FileChip({ name, size, onRemove }: { name: string; size: number; onRemove?: () => void }) {
+function FileRow({ name, size, onRemove }: { name: string; size: number; onRemove?: () => void }) {
   return (
-    <div className="flex animate-rise items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm">
-      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-sky-50 text-deep">
-        {name.toLowerCase().endsWith(".pdf") ? <IconFile width={18} height={18} /> : <IconPolygon width={18} height={18} />}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-slate-900">{name}</span>
-        <span className="block font-mono text-[11px] text-slate-400">{formatSize(size)}</span>
+    <div className="fade-in flex items-baseline justify-between gap-4 border-b border-hairline pb-3">
+      <span className="min-w-0">
+        <span className="block truncate text-[15px] text-ink">{name}</span>
+        <span className="block text-[13px] text-graphite">{formatSize(size)}</span>
       </span>
       {onRemove && (
-        <button type="button" onClick={onRemove} title="Remove" className="grid size-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-          <IconX width={16} height={16} />
+        <button type="button" onClick={onRemove} className="shrink-0 text-[13px] text-graphite underline underline-offset-2 hover:text-alert">
+          Remove
         </button>
       )}
     </div>
   );
 }
 
-function Stat({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
+function Figure({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
   return (
-    <div className={`rounded-2xl p-3.5 ${accent ? "bg-night text-white" : "border border-slate-200 bg-white"}`}>
-      <p className={`font-mono text-xl font-semibold tracking-tight ${accent ? "text-ice" : "text-slate-900"}`}>{value}</p>
-      <p className={`text-[11px] ${accent ? "text-slate-400" : "text-slate-500"}`}>{label}</p>
+    <div className="px-6 py-5">
+      <p className={`text-[38px] font-extralight leading-none tracking-[-0.02em] tabular-nums ${accent ? "text-nla" : "text-ink"}`}>{value}</p>
+      <p className="mt-2 text-[13px] text-graphite">{label}</p>
     </div>
   );
 }
 
-const CHIP_TONES = {
-  copied: "bg-sky-50 text-deep ring-sky-200",
-  auto: "bg-night text-ice ring-night",
-  ignored: "bg-slate-50 text-slate-400 ring-slate-200 line-through decoration-slate-300",
-} as const;
-
-function ChipRow({ label, names, tone, empty }: { label: string; names: string[]; tone: keyof typeof CHIP_TONES; empty?: string }) {
+function FieldLine({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>
-      <div className="flex flex-wrap gap-1.5">
-        {names.length === 0 && empty && <span className="text-xs text-amber-600">{empty}</span>}
-        {names.map((n) => (
-          <span key={n} className={`rounded-md px-1.5 py-0.5 font-mono text-[11px] ring-1 ${CHIP_TONES[tone]}`}>
-            {n}
-          </span>
-        ))}
-      </div>
+      <dt className="text-[12px] text-graphite">{label}</dt>
+      <dd className="text-ink">{children}</dd>
     </div>
   );
 }
 
-function Badge({ tone, title, children }: { tone: "grey" | "red"; title?: string; children: ReactNode }) {
-  const tones = { grey: "bg-slate-100 text-slate-500", red: "bg-rose-50 text-rose-600" };
-  return (
-    <span title={title} className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tones[tone]}`}>
-      {children}
-    </span>
-  );
-}
+const REMARK_TONES = {
+  info: "border-nla text-ink",
+  muted: "border-[#bdbdbd] text-[#3d3d3d]",
+  warn: "border-warn text-ink",
+  alert: "border-alert text-ink",
+} as const;
 
-function Note({ icon, title, children }: { icon: ReactNode; title?: string; children: ReactNode }) {
+function Remark({ tone, title, children }: { tone: keyof typeof REMARK_TONES; title?: string; children: ReactNode }) {
   return (
-    <div className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3.5 text-[13px] leading-5 text-slate-600">
-      <span className="mt-0.5 shrink-0">{icon}</span>
-      <div>
-        {title && <p className="font-semibold text-slate-900">{title}</p>}
-        <div className={title ? "mt-0.5" : ""}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function Callout({ tone, title, children }: { tone: "red" | "amber"; title: string; children: ReactNode }) {
-  const tones = { red: "border-rose-200 bg-rose-50 text-rose-900", amber: "border-amber-200 bg-amber-50 text-amber-900" };
-  const icon = { red: "text-rose-500", amber: "text-amber-500" };
-  return (
-    <div className={`flex animate-rise gap-3 rounded-2xl border p-3.5 text-[13px] leading-5 ${tones[tone]}`} role={tone === "red" ? "alert" : undefined}>
-      <IconAlert className={`mt-0.5 shrink-0 ${icon[tone]}`} width={16} height={16} />
-      <div>
-        <p className="font-semibold">{title}</p>
-        <div className="mt-0.5 opacity-90">{children}</div>
-      </div>
+    <div className={`fade-in border-l-2 pl-3 text-[14px] leading-6 ${REMARK_TONES[tone]}`} role={tone === "alert" ? "alert" : undefined}>
+      {title && <p className="font-semibold">{title}</p>}
+      <div className={title ? "text-[#3d3d3d]" : ""}>{children}</div>
     </div>
   );
 }

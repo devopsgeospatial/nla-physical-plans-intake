@@ -37,7 +37,8 @@ const BASEMAPS = {
 } as const;
 type BasemapKey = keyof typeof BASEMAPS;
 
-const COLORS = { plan: "#22d3ee", saved: "#22c55e", repair: "#f43f5e", skip: "#cbd5e1" };
+// NLA blue for new parcels; skipped duplicates are white outlines only.
+const COLORS = { plan: "#078ece", saved: "#2fbf71", repair: "#ff4d4d", skip: "#ffffff" };
 const MAX_KINK_MARKERS = 500;
 const MAX_LABELS = 40;
 const MAX_POPUP_ROWS = 24;
@@ -143,7 +144,7 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
     if (kinks.length > 0) {
       kinkLayerRef.current = L.layerGroup(
         kinks.map(({ i, at }) =>
-          L.circleMarker([at[1], at[0]], { radius: 5, color: "#fff", weight: 2, fillColor: COLORS.repair, fillOpacity: 1 }).on("click", () =>
+          L.circleMarker([at[1], at[0]], { radius: 4, color: "#fff", weight: 1.5, fillColor: COLORS.repair, fillOpacity: 1 }).on("click", () =>
             propsRef.current.onSelect(i),
           ),
         ),
@@ -156,6 +157,8 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
   useEffect(() => {
     featureLayersRef.current.forEach((l, i) => {
       l.setStyle(styleFor(i, i === hovered || i === selected));
+      // Skipped duplicates often sit exactly on the parcel they repeat: hide their number so it doesn't cover it.
+      l.getTooltip()?.setOpacity(skipped.has(i) ? 0 : 1);
       if (i === hovered || i === selected) l.bringToFront();
     });
   }, [hovered, selected, appended, skipped]);
@@ -169,30 +172,17 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
     map.once("moveend", () => target.openPopup());
   }, [selected]);
 
-  const empty = !features || features.length === 0;
-
   return (
     <div className="absolute inset-0">
       <div ref={containerRef} className="absolute inset-0" aria-label="Map of the uploaded polygons" />
 
-      {empty && (
-        <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center p-6">
-          <div className="animate-rise rounded-2xl border border-white/10 bg-night/85 px-5 py-3.5 text-center shadow-2xl backdrop-blur">
-            <p className="text-sm font-semibold text-white">Your plan will appear here</p>
-            <p className="mt-0.5 text-xs text-ice/70">Every polygon, on the map, before anything is saved</p>
-          </div>
-        </div>
-      )}
-
-      <div className="absolute right-3 top-3 z-[1000] flex gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+      <div className="absolute right-3 top-3 z-[1000] flex bg-white text-[13px]">
         {(Object.keys(BASEMAPS) as BasemapKey[]).map((key) => (
           <button
             key={key}
             type="button"
             onClick={() => setBasemap(key)}
-            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition ${
-              basemap === key ? "bg-night text-ice" : "text-slate-600 hover:bg-slate-100"
-            }`}
+            className={`px-3 py-2 transition ${basemap === key ? "bg-ink text-white" : "text-ink hover:bg-nla-tint"}`}
           >
             {BASEMAPS[key].label}
           </button>
@@ -204,15 +194,21 @@ export default function UploadPreviewMap({ features, labels, hovered, selected, 
 
 type PolygonState = "plan" | "saved" | "repair" | "skip";
 
+/** White outlines read on any imagery; the fill carries the state colour. */
 function baseStyle(state: PolygonState) {
-  const color = COLORS[state];
-  const dashed = state === "repair" || state === "skip";
-  return { color, weight: 2.5, opacity: 1, fillColor: color, fillOpacity: state === "skip" ? 0.08 : 0.22, dashArray: dashed ? "6 4" : undefined };
+  if (state === "skip") return { color: "#ffffff", weight: 1.5, opacity: 0.9, fillOpacity: 0, dashArray: "4 4" };
+  return {
+    color: state === "repair" ? COLORS.repair : "#ffffff",
+    weight: 1.5,
+    opacity: 1,
+    fillColor: COLORS[state],
+    fillOpacity: 0.45,
+    dashArray: state === "repair" ? "5 4" : undefined,
+  };
 }
 
 function highlightStyle(state: PolygonState) {
-  const color = COLORS[state];
-  return { color: "#ffffff", weight: 3.5, opacity: 1, fillColor: color, fillOpacity: 0.45, dashArray: undefined };
+  return { color: "#000000", weight: 2.5, opacity: 1, fillColor: COLORS[state], fillOpacity: state === "skip" ? 0.15 : 0.7, dashArray: undefined };
 }
 
 /** Breathing room around fitted geometry (top leaves space for the basemap switcher). */
@@ -227,13 +223,13 @@ function popupHtml(title: string, properties: Record<string, unknown>): string {
     .slice(0, MAX_POPUP_ROWS)
     .map(
       ([k, v]) =>
-        `<tr><td style="padding:2px 12px 2px 0;color:#64748b;font-family:var(--font-mono);font-size:11px;vertical-align:top">${escapeHtml(k)}</td><td style="padding:2px 0;color:#0f172a">${escapeHtml(formatValue(v))}</td></tr>`,
+        `<tr><td style="padding:3px 14px 3px 0;color:#6b6b6b;vertical-align:top">${escapeHtml(k)}</td><td style="padding:3px 0;color:#000">${escapeHtml(formatValue(v))}</td></tr>`,
     )
     .join("");
-  const more = entries.length > MAX_POPUP_ROWS ? `<p style="margin:6px 0 0;color:#64748b">+ ${entries.length - MAX_POPUP_ROWS} more</p>` : "";
-  return `<div style="font-weight:700;font-size:13px;margin-bottom:2px;color:#0369a1;font-family:var(--font-mono)">${escapeHtml(title)}</div>
-<div style="color:#64748b;font-size:11px;margin-bottom:8px">Polygon ${Number(__i) + 1}</div>
-${rows ? `<table>${rows}</table>` : `<p style="color:#64748b">No attributes in the file</p>`}${more}`;
+  const more = entries.length > MAX_POPUP_ROWS ? `<p style="margin:6px 0 0;color:#6b6b6b">${entries.length - MAX_POPUP_ROWS} more fields</p>` : "";
+  return `<div style="font-size:15px;font-weight:300;color:#000">${escapeHtml(title)}</div>
+<div style="color:#078ece;font-size:12px;margin:2px 0 10px">Polygon ${Number(__i) + 1}</div>
+${rows ? `<table style="font-size:12px">${rows}</table>` : `<p style="color:#6b6b6b">No attributes in the file</p>`}${more}`;
 }
 
 function formatValue(value: unknown): string {
