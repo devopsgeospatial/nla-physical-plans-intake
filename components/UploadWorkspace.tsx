@@ -72,10 +72,13 @@ export default function UploadWorkspace({
   layer,
   user,
   portalHost,
+  maxRequestBytes,
 }: {
   layer: LayerSummary;
   user: { fullName: string; username: string };
   portalHost: string;
+  /** Largest submission the server accepts (file + PDFs), so oversize uploads are caught before sending. */
+  maxRequestBytes: number;
 }) {
   const [upload, setUpload] = useState<FileState>({ kind: "empty" });
   const [documents, setDocuments] = useState<File[]>([]);
@@ -101,7 +104,10 @@ export default function UploadWorkspace({
   const count = parsed?.features.length ?? 0;
   const totalHa = parsed ? parsed.features.reduce((sum, f) => sum + f.areaSqMeters, 0) / 10_000 : 0;
   const done = submit.kind === "success";
-  const canSubmit = !!parsed && submit.kind !== "submitting" && !done;
+  // Multipart overhead is small; keep a 32 KB margin under the server limit.
+  const totalBytes = (upload.kind === "valid" ? upload.file.size : 0) + documents.reduce((n, d) => n + d.size, 0);
+  const tooLarge = totalBytes + 32 * 1024 > maxRequestBytes;
+  const canSubmit = !!parsed && !tooLarge && submit.kind !== "submitting" && !done;
 
   const loadFile = useCallback(async (file: File) => {
     setSubmit({ kind: "idle" });
@@ -124,7 +130,13 @@ export default function UploadWorkspace({
     try {
       const response = await fetch("/api/plans/submit", { method: "POST", body });
       const json = (await response.json().catch(() => null)) as AppendSuccess | AppendFailure | null;
-      if (!json) setSubmit({ kind: "error", failure: { ok: false, error: `Server returned HTTP ${response.status}.` } });
+      if (!json) {
+        const error =
+          response.status === 413
+            ? `The upload is larger than the server accepts (${formatSize(maxRequestBytes)}). Remove or compress PDFs and try again.`
+            : `Server returned HTTP ${response.status}.`;
+        setSubmit({ kind: "error", failure: { ok: false, error } });
+      }
       else if (json.ok) setSubmit({ kind: "success", result: json });
       else setSubmit({ kind: "error", failure: json });
     } catch (err) {
@@ -288,6 +300,12 @@ export default function UploadWorkspace({
               </>
             )}
           </Step>
+
+          {tooLarge && !done && (
+            <Callout tone="amber" title={`Upload is ${formatSize(totalBytes)}`}>
+              One submission can be at most {formatSize(maxRequestBytes)} (plan file and PDFs together). Remove or compress some PDFs.
+            </Callout>
+          )}
 
           <div ref={outcomeRef} className="scroll-mb-4">
           {submit.kind === "success" && (

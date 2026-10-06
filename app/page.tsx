@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { BrandMark, IconAlert, IconGlobe, IconLayers, IconShield } from "@/components/icons";
 import UploadWorkspace, { type LayerSummary } from "@/components/UploadWorkspace";
-import { ConfigurationError, getArcGisConfig, type ArcGisConfig } from "@/lib/arcgis/config";
+import { ConfigurationError, getArcGisConfig, getUploadLimits, type ArcGisConfig } from "@/lib/arcgis/config";
 import { FeatureLayerClient } from "@/lib/arcgis/feature-layer";
 import { ArcGisRequestError } from "@/lib/arcgis/rest";
 import { createUserTokenProvider } from "@/lib/auth/oauth";
@@ -55,7 +55,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ a
     );
   }
 
-  return <UploadWorkspace layer={layer} user={{ fullName: session.fullName, username: session.username }} portalHost={new URL(config.portalUrl).host} />;
+  return (
+    <UploadWorkspace
+      layer={layer}
+      user={{ fullName: session.fullName, username: session.username }}
+      portalHost={new URL(config.portalUrl).host}
+      maxRequestBytes={getUploadLimits().maxRequestBytes}
+    />
+  );
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -87,7 +87,7 @@ async function readUpload(form: FormData, limits: UploadLimits): Promise<Omit<Ap
 
 function assertContentLength(request: Request, limits: UploadLimits): void {
   const declared = Number(request.headers.get("content-length") ?? "0");
-  const max = limits.maxBoundaryBytes + limits.maxPdfBytes * limits.maxPdfCount + 64 * 1024;
+  const max = limits.maxRequestBytes;
   if (declared > max) throw new RequestValidationError(`Upload exceeds ${formatBytes(max)} in total.`, undefined, 413);
 }
 

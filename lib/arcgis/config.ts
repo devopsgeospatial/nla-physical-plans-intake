@@ -20,6 +20,8 @@ export interface UploadLimits {
   maxBoundaryBytes: number;
   maxPdfBytes: number;
   maxPdfCount: number;
+  /** Whole multipart request. Set MAX_REQUEST_BYTES on hosts with a body limit (Vercel functions: 4.5 MB). */
+  maxRequestBytes: number;
 }
 
 export class ConfigurationError extends Error {
@@ -55,10 +57,14 @@ export function getArcGisConfig(): ArcGisConfig {
 }
 
 export function getUploadLimits(): UploadLimits {
+  const maxBoundaryBytes = positiveInt("MAX_BOUNDARY_BYTES", 10 * 1024 * 1024);
+  const maxPdfBytes = positiveInt("MAX_PDF_BYTES", 25 * 1024 * 1024);
+  const maxPdfCount = positiveInt("MAX_PDF_COUNT", 5);
   return {
-    maxBoundaryBytes: positiveInt("MAX_BOUNDARY_BYTES", 10 * 1024 * 1024),
-    maxPdfBytes: positiveInt("MAX_PDF_BYTES", 25 * 1024 * 1024),
-    maxPdfCount: positiveInt("MAX_PDF_COUNT", 5),
+    maxBoundaryBytes,
+    maxPdfBytes,
+    maxPdfCount,
+    maxRequestBytes: positiveInt("MAX_REQUEST_BYTES", maxBoundaryBytes + maxPdfBytes * maxPdfCount + 64 * 1024),
   };
 }
 
