@@ -2,7 +2,7 @@
 
 Web intake for physical plan submissions. Planners sign in with their **ArcGIS Online** account, upload a plan boundary (GeoJSON or zipped Shapefile) and supporting PDFs. The app validates the geometry, projects it into the layer's national grid (TM Rwanda / ITRF2005) and writes the feature and its attachments straight into a hosted feature layer. Reviewers see it in **ArcGIS Experience Builder** within seconds, with no manual publishing.
 
-[![CI](../../actions/workflows/ci.yml/badge.svg)](../../actions/workflows/ci.yml)
+[![CI](https://github.com/devopsgeospatial/nla-physical-plans-intake/actions/workflows/ci.yml/badge.svg)](https://github.com/devopsgeospatial/nla-physical-plans-intake/actions/workflows/ci.yml)
 
 | Sign in (each planner uses their own ArcGIS account) | Boundary preview on imagery before submitting |
 |---|---|
