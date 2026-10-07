@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import type { MapSettings } from "@/lib/arcgis/config";
 import type { UploadFeature } from "@/lib/geo/parse-upload";
 import type { Submission, SubmissionDocument, SubmissionStatus } from "@/lib/plans/my-submissions";
 import AppHeader from "./AppHeader";
@@ -20,7 +21,17 @@ const STATUS: Record<SubmissionStatus, { label: string; className: string }> = {
   approved: { label: "Approved", className: "bg-[#e3f3e8] text-ok" },
 };
 
-export default function SubmissionsView({ submissions, error, fullName }: { submissions: Submission[]; error: string | null; fullName: string }) {
+export default function SubmissionsView({
+  submissions,
+  error,
+  fullName,
+  map,
+}: {
+  submissions: Submission[];
+  error: string | null;
+  fullName: string;
+  map: MapSettings;
+}) {
   const [openId, setOpenId] = useState<number | null>(null);
   const [parcels, setParcels] = useState<UploadFeature[] | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
@@ -64,10 +75,7 @@ export default function SubmissionsView({ submissions, error, fullName }: { subm
                       <li key={s.submittedAt} className="border-b border-hairline">
                         <button type="button" onClick={() => setOpenId(s.submittedAt)} className="w-full px-5 py-3.5 text-left transition hover:bg-mist">
                           <span className="flex items-start justify-between gap-3">
-                            <span className="min-w-0">
-                              <span className="block truncate text-[15px] text-ink">{s.planIds.join(", ") || "Plan"}</span>
-                              <span className="block text-[12px] text-graphite">{formatDateTime(s.submittedAt)}</span>
-                            </span>
+                            <span className="min-w-0 truncate text-[15px] text-ink">{formatDateTime(s.submittedAt)}</span>
                             <StatusTag submission={s} />
                           </span>
                           <span className="mt-1.5 block text-[12px] text-graphite">
@@ -95,9 +103,10 @@ export default function SubmissionsView({ submissions, error, fullName }: { subm
                 </button>
 
                 <div>
-                  <h1 className="text-[18px] text-ink">{open.planIds.join(", ") || "Plan"}</h1>
+                  <h1 className="text-[18px] text-ink">{formatDateTime(open.submittedAt)}</h1>
                   <p className="mt-0.5 text-[13px] text-graphite">
-                    {formatDateTime(open.submittedAt)} · {open.objectIds.length} parcel{open.objectIds.length === 1 ? "" : "s"}
+                    {open.objectIds.length} parcel{open.objectIds.length === 1 ? "" : "s"}
+                    {open.districts.length > 0 && ` · ${open.districts.join(", ")}`}
                   </p>
                   <div className="mt-3">
                     <StatusTag submission={open} large />
@@ -144,6 +153,7 @@ export default function SubmissionsView({ submissions, error, fullName }: { subm
 
         <div className="relative h-[45dvh] shrink-0 lg:h-auto lg:flex-1">
           <UploadPreviewMap
+            map={map}
             features={parcels}
             labels={parcels?.map((p, i) => String(p.properties.parcel_upi ?? `Parcel ${i + 1}`)) ?? []}
             hovered={null}

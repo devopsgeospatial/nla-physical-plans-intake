@@ -25,5 +25,12 @@ export default async function SubmissionsPage() {
     error = "Your submissions could not be loaded. Please try again.";
   }
 
-  return <SubmissionsView submissions={submissions} error={error} fullName={session.fullName} />;
+  return (
+    <SubmissionsView
+      submissions={submissions}
+      error={error}
+      fullName={session.fullName}
+      map={{ portalUrl: config.webMapPortalUrl, webMapId: config.webMapId }}
+    />
+  );
 }

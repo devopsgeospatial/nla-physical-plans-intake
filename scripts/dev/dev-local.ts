@@ -23,6 +23,8 @@ async function main() {
       ...process.env,
       ARCGIS_PORTAL_URL: EMULATOR_PORTAL_URL,
       ARCGIS_FEATURE_LAYER_URL: EMULATOR_LAYER_URL,
+      // The emulator does not serve web maps: load the real one (public) from ArcGIS Online.
+      ARCGIS_WEBMAP_PORTAL_URL: process.env.ARCGIS_WEBMAP_PORTAL_URL || "https://rla.maps.arcgis.com",
       ARCGIS_OAUTH_CLIENT_ID: "local-emulator",
       ARCGIS_OAUTH_REDIRECT_URI: `${APP_URL}/api/auth/callback`,
       ARCGIS_ALLOWED_GROUP_ID: EMULATOR_GROUP_ID,

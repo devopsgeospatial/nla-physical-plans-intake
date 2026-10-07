@@ -1,253 +1,215 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { Feature, FeatureCollection } from "geojson";
-import type { GeoJSON as LeafletGeoJSON, ImageOverlay, Layer, LayerGroup, Map as LeafletMap, Path } from "leaflet";
+import { useEffect, useRef } from "react";
+import esriConfig from "@arcgis/core/config";
+import Graphic from "@arcgis/core/Graphic";
+import Extent from "@arcgis/core/geometry/Extent";
+import Point from "@arcgis/core/geometry/Point";
+import Polygon from "@arcgis/core/geometry/Polygon";
+import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer";
+import SimpleFillSymbol from "@arcgis/core/symbols/SimpleFillSymbol";
+import SimpleMarkerSymbol from "@arcgis/core/symbols/SimpleMarkerSymbol";
+import TextSymbol from "@arcgis/core/symbols/TextSymbol";
+import MapView from "@arcgis/core/views/MapView";
+import WebMap from "@arcgis/core/WebMap";
+import type { MapSettings } from "@/lib/arcgis/config";
+import { geoJsonToEsriPolygon } from "@/lib/geo/esri-geometry";
 import type { UploadFeature } from "@/lib/geo/parse-upload";
 
 interface Props {
+  /** The ArcGIS Online web map behind the parcels (basemap and layers as configured in Map Viewer). */
+  map: MapSettings;
   features: UploadFeature[] | null;
   labels: string[];
   hovered: number | null;
   selected: number | null;
   onSelect: (index: number) => void;
-  /** After a successful append the polygons switch to the "saved" colour. */
+  /** After a successful append (or approval) the polygons switch to the "saved" colour. */
   appended: boolean;
   /** Indexes of polygons that will not be appended (duplicates). */
   skipped: ReadonlySet<number>;
 }
 
-const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
-/** Esri "Imagery Hybrid": imagery with roads, places and administrative boundaries on top. */
-const HYBRID_LAYERS = [
-  `${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
-  `${ESRI}/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}`,
-  `${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
-];
-const HYBRID_ATTRIBUTION = "Esri, Maxar, Earthstar Geographics; districts: NLA Rwanda";
-/** NLA's official district boundaries (Rwanda Spatial Data Hub), drawn on request for the current view. */
-const NLA_DISTRICTS_EXPORT = "https://geodata.rw/server/rest/services/basemap/District_boundary/MapServer/export";
-
-// Hub blue for new parcels, amber for the selected one; skipped duplicates are white outlines only.
-const COLORS = { plan: "#0d73b0", saved: "#2fbf71", repair: "#ff4d4d", skip: "#ffffff" };
-const MAX_KINK_MARKERS = 500;
-const MAX_LABELS = 40;
-const MAX_POPUP_ROWS = 24;
-
-/** Leaflet touches `window` on import, so it is loaded lazily inside effects (client only). */
-export default function UploadPreviewMap({ features, labels, hovered, selected, onSelect, appended, skipped }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<LeafletMap | null>(null);
-  const leafletRef = useRef<typeof import("leaflet") | null>(null);
-  const dataLayerRef = useRef<LeafletGeoJSON | null>(null);
-  const kinkLayerRef = useRef<LayerGroup | null>(null);
-  const featureLayersRef = useRef<Path[]>([]);
-  const propsRef = useRef({ features, labels, appended, onSelect, skipped });
-  const [ready, setReady] = useState(false);
-
-  // ---- map lifecycle ---------------------------------------------------------------------------
-  useEffect(() => {
-    let disposed = false;
-    let resizeObserver: ResizeObserver | undefined;
-    void import("leaflet").then((L) => {
-      if (disposed || !containerRef.current) return;
-      leafletRef.current = L;
-      // Canvas rendering keeps thousands of parcels responsive.
-      const map = L.map(containerRef.current, { center: [-1.95, 29.95], zoom: 9, zoomControl: false, attributionControl: true, preferCanvas: true });
-      L.control.zoom({ position: "bottomright" }).addTo(map);
-      L.control.scale({ position: "bottomright", imperial: false }).addTo(map);
-      mapRef.current = map;
-      resizeObserver = new ResizeObserver(() => map.invalidateSize());
-      resizeObserver.observe(containerRef.current);
-      setReady(true);
-    });
-    return () => {
-      disposed = true;
-      resizeObserver?.disconnect();
-      mapRef.current?.remove();
-      mapRef.current = null;
-    };
-  }, []);
-
-  // ---- basemap: Imagery Hybrid + NLA districts ---------------------------------------------------
-  useEffect(() => {
-    const L = leafletRef.current;
-    const map = mapRef.current;
-    if (!ready || !L || !map) return;
-    HYBRID_LAYERS.forEach((url, i) =>
-      // Skip loading tiles for intermediate zoom levels during fly animations: the final view's imagery arrives sooner.
-      // Imagery is real up to level 18 around Rwanda; deeper zooms upscale it instead of showing "Map data not yet available".
-      L.tileLayer(url, {
-        maxZoom: 20,
-        maxNativeZoom: 18,
-        updateWhenZooming: false,
-        keepBuffer: 3,
-        attribution: i === 0 ? HYBRID_ATTRIBUTION : undefined,
-      }).addTo(map),
-    );
-
-    // Districts sit between the basemap and the parcels, so they never cover a parcel.
-    map.createPane("districts").style.zIndex = "350";
-    map.getPane("districts")!.style.pointerEvents = "none";
-    let overlay: ImageOverlay | null = null;
-    let request = 0;
-    const refresh = () => {
-      const bounds = map.getBounds();
-      const size = map.getSize();
-      const sw = L.CRS.EPSG3857.project(bounds.getSouthWest());
-      const ne = L.CRS.EPSG3857.project(bounds.getNorthEast());
-      const src =
-        `${NLA_DISTRICTS_EXPORT}?bbox=${sw.x},${sw.y},${ne.x},${ne.y}&bboxSR=3857&imageSR=3857` +
-        `&size=${size.x},${size.y}&format=png32&transparent=true&f=image`;
-      const id = ++request;
-      const img = new Image();
-      img.onload = () => {
-        if (id !== request) return; // a newer view replaced this one
-        const next = L.imageOverlay(src, bounds, { pane: "districts", interactive: false }).addTo(map);
-        overlay?.remove();
-        overlay = next;
-      };
-      img.src = src; // failures leave the previous overlay (or none); the map still works
-    };
-    map.on("moveend", refresh);
-    refresh();
-    return () => {
-      map.off("moveend", refresh);
-      overlay?.remove();
-    };
-  }, [ready]);
-
-  // ---- data ------------------------------------------------------------------------------------
-  propsRef.current = { features, labels, appended, onSelect, skipped };
-
-  /** Duplicates are grey; repair-flagged polygons red until appended (by then ArcGIS has repaired them). */
-  const styleFor = (index: number, highlighted: boolean) => {
-    const { features: current, appended: saved, skipped: skip } = propsRef.current;
-    const state: PolygonState = skip.has(index) ? "skip" : saved ? "saved" : current?.[index]?.selfIntersection ? "repair" : "plan";
-    return highlighted ? highlightStyle(state) : baseStyle(state);
-  };
-
-  useEffect(() => {
-    const L = leafletRef.current;
-    const map = mapRef.current;
-    if (!ready || !L || !map) return;
-
-    dataLayerRef.current?.remove();
-    dataLayerRef.current = null;
-    kinkLayerRef.current?.remove();
-    kinkLayerRef.current = null;
-    featureLayersRef.current = [];
-    if (!features || features.length === 0) return;
-
-    const collection: FeatureCollection = {
-      type: "FeatureCollection",
-      features: features.map((f, i) => ({ type: "Feature", geometry: f.geometry, properties: { ...f.properties, __i: i } })),
-    };
-    const layer = L.geoJSON(collection, {
-      style: (feature) => styleFor(feature?.properties?.__i as number, false),
-      onEachFeature: (feature: Feature, leafletLayer: Layer) => {
-        const i = feature.properties?.__i as number;
-        featureLayersRef.current[i] = leafletLayer as Path;
-        leafletLayer.bindPopup(() => popupHtml(propsRef.current.labels[i] ?? `Polygon ${i + 1}`, feature.properties ?? {}), {
-          maxWidth: 340,
-          autoPanPadding: [40, 40],
-        });
-        leafletLayer.on("click", () => propsRef.current.onSelect(i));
-        if (features.length <= MAX_LABELS) {
-          // Numbers match the list in the panel; full IDs are in the list and popups (long IDs would overlap on small parcels).
-          leafletLayer.bindTooltip(String(i + 1), { permanent: true, direction: "center", className: "plan-label" });
-        }
-      },
-    }).addTo(map);
-    dataLayerRef.current = layer;
-
-    // Mark where flagged polygons cross themselves.
-    const kinks = features.flatMap((f, i) => (f.selfIntersection ? [{ i, at: f.selfIntersection }] : [])).slice(0, MAX_KINK_MARKERS);
-    if (kinks.length > 0) {
-      kinkLayerRef.current = L.layerGroup(
-        kinks.map(({ i, at }) =>
-          L.circleMarker([at[1], at[0]], { radius: 4, color: "#fff", weight: 1.5, fillColor: COLORS.repair, fillOpacity: 1 }).on("click", () =>
-            propsRef.current.onSelect(i),
-          ),
-        ),
-      ).addTo(map);
-    }
-    map.flyToBounds(layer.getBounds(), { ...fitPadding(), maxZoom: 18, duration: 0.7 });
-  }, [features, ready]);
-
-  // ---- appearance updates ----------------------------------------------------------------------
-  useEffect(() => {
-    featureLayersRef.current.forEach((l, i) => {
-      l.setStyle(styleFor(i, i === hovered || i === selected));
-      // Skipped duplicates often sit exactly on the parcel they repeat: hide their number so it doesn't cover it.
-      l.getTooltip()?.setOpacity(skipped.has(i) ? 0 : 1);
-      if (i === hovered || i === selected) l.bringToFront();
-    });
-  }, [hovered, selected, appended, skipped]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    const target = selected === null ? null : featureLayersRef.current[selected];
-    if (!map || !target) return;
-    const bounds = (target as unknown as { getBounds: () => import("leaflet").LatLngBounds }).getBounds();
-    map.flyToBounds(bounds, { ...fitPadding(), maxZoom: 19, duration: 0.8 });
-    map.once("moveend", () => target.openPopup());
-  }, [selected]);
-
-  return (
-    <div className="absolute inset-0">
-      <div ref={containerRef} className="absolute inset-0" aria-label="Map of the uploaded polygons" />
-
-    </div>
-  );
-}
-
 type PolygonState = "plan" | "saved" | "repair" | "skip";
 
-/** White outlines read on any imagery; the fill carries the state colour. */
-function baseStyle(state: PolygonState) {
-  if (state === "skip") return { color: "#ffffff", weight: 1.5, opacity: 0.9, fillOpacity: 0, dashArray: "4 4" };
-  return {
-    color: state === "repair" ? COLORS.repair : "#ffffff",
-    weight: 1.5,
-    opacity: 1,
-    fillColor: COLORS[state],
-    fillOpacity: 0.45,
-    dashArray: state === "repair" ? "5 4" : undefined,
+// Hub blue for new parcels, amber for the selected one, red for self-crossing, white outline for duplicates.
+const FILL: Record<PolygonState, [number, number, number, number]> = {
+  plan: [13, 115, 176, 0.45],
+  saved: [47, 191, 113, 0.45],
+  repair: [255, 77, 77, 0.45],
+  skip: [255, 255, 255, 0],
+};
+const MAX_LABELS = 40;
+const MAX_KINK_MARKERS = 500;
+const MAX_POPUP_ROWS = 24;
+const FIT_PADDING = { top: 48, right: 48, bottom: 48, left: 48 };
+
+function symbolFor(state: PolygonState, highlighted: boolean): SimpleFillSymbol {
+  if (highlighted) {
+    return new SimpleFillSymbol({ color: [...FILL[state].slice(0, 3), state === "skip" ? 0.15 : 0.6] as number[], outline: { color: [255, 168, 0, 1], width: 3 } });
+  }
+  return new SimpleFillSymbol({
+    color: FILL[state],
+    outline: {
+      color: state === "repair" ? [255, 77, 77, 1] : [255, 255, 255, state === "skip" ? 0.9 : 1],
+      width: 1.5,
+      style: state === "repair" || state === "skip" ? "dash" : "solid",
+    },
+  });
+}
+
+/** ArcGIS Maps SDK view of the configured web map, with the uploaded parcels drawn on top. */
+export default function UploadPreviewMap({ map, features, labels, hovered, selected, onSelect, appended, skipped }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<MapView | null>(null);
+  const parcelsRef = useRef<GraphicsLayer | null>(null);
+  const graphicsRef = useRef<Graphic[]>([]);
+  const propsRef = useRef({ features, labels, appended, skipped, onSelect });
+  propsRef.current = { features, labels, appended, skipped, onSelect };
+
+  const stateOf = (index: number): PolygonState => {
+    const { features: current, appended: saved, skipped: skip } = propsRef.current;
+    return skip.has(index) ? "skip" : saved ? "saved" : current?.[index]?.selfIntersection ? "repair" : "plan";
   };
+
+  // ---- view lifecycle ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!containerRef.current) return;
+    esriConfig.portalUrl = map.portalUrl;
+    const parcels = new GraphicsLayer({ title: "Uploaded parcels" });
+    const webmap = new WebMap({ portalItem: { id: map.webMapId } });
+    const view = new MapView({
+      container: containerRef.current,
+      map: webmap,
+      constraints: { snapToZoom: false },
+      popup: { dockEnabled: false, dockOptions: { buttonEnabled: false } },
+    });
+    view.ui.move("zoom", "bottom-right");
+    viewRef.current = view;
+    parcelsRef.current = parcels;
+
+    // Keep the parcels above every layer of the web map.
+    webmap.when(() => webmap.add(parcels)).catch((err) => console.error("[map] web map failed to load", err));
+
+    const click = view.on("click", async (event) => {
+      const hit = await view.hitTest(event, { include: [parcels] });
+      const graphic = hit.results.find((r) => r.type === "graphic")?.graphic;
+      const index = graphic?.attributes?.__i;
+      if (typeof index === "number") propsRef.current.onSelect(index);
+    });
+
+    return () => {
+      click.remove();
+      view.destroy();
+      viewRef.current = null;
+      parcelsRef.current = null;
+      graphicsRef.current = [];
+    };
+  }, [map.portalUrl, map.webMapId]);
+
+  // ---- parcels ----------------------------------------------------------------------------------
+  useEffect(() => {
+    const view = viewRef.current;
+    const layer = parcelsRef.current;
+    if (!view || !layer) return;
+    layer.removeAll();
+    graphicsRef.current = [];
+    view.closePopup();
+    if (!features || features.length === 0) return;
+
+    const polygons = features.map((f, i) => {
+      const esri = geoJsonToEsriPolygon(f.geometry);
+      return new Graphic({
+        geometry: new Polygon({ rings: esri.rings, spatialReference: { wkid: 4326 } }),
+        symbol: symbolFor(stateOf(i), false),
+        attributes: { __i: i },
+      });
+    });
+    graphicsRef.current = polygons;
+    layer.addMany(polygons);
+
+    // Numbers match the panel; long IDs would overlap on small parcels.
+    if (features.length <= MAX_LABELS) {
+      layer.addMany(
+        polygons.map((g, i) => {
+          const at = (g.geometry as Polygon).centroid ?? (g.geometry as Polygon).extent!.center;
+          return new Graphic({
+            geometry: at,
+            symbol: new TextSymbol({ text: String(i + 1), color: "white", haloColor: [25, 52, 67, 1], haloSize: 2, font: { size: 10, weight: "bold" } }),
+            attributes: { __i: i, label: true },
+          });
+        }),
+      );
+    }
+
+    const kinks = features.flatMap((f, i) => (f.selfIntersection ? [{ i, at: f.selfIntersection }] : [])).slice(0, MAX_KINK_MARKERS);
+    layer.addMany(
+      kinks.map(
+        ({ i, at }) =>
+          new Graphic({
+            geometry: new Point({ longitude: at[0], latitude: at[1] }),
+            symbol: new SimpleMarkerSymbol({ size: 8, color: [255, 77, 77, 1], outline: { color: "white", width: 1.5 } }),
+            attributes: { __i: i },
+          }),
+      ),
+    );
+
+    const extent = polygons.reduce<Extent | null>((acc, g) => (acc ? acc.union(g.geometry!.extent!) : g.geometry!.extent!.clone()), null);
+    if (extent) view.when(() => view.goTo({ target: extent.expand(1.1) }, { duration: 700 }).catch(() => undefined));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [features]);
+
+  // ---- appearance -------------------------------------------------------------------------------
+  useEffect(() => {
+    graphicsRef.current.forEach((g, i) => {
+      g.symbol = symbolFor(stateOf(i), i === hovered || i === selected);
+    });
+    // Skipped duplicates often sit exactly on the parcel they repeat: hide their number.
+    parcelsRef.current?.graphics.forEach((g) => {
+      if (g.attributes?.label) g.visible = !skipped.has(g.attributes.__i);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hovered, selected, appended, skipped, features]);
+
+  // ---- selection: zoom to the parcel and show its attributes ---------------------------------------
+  useEffect(() => {
+    const view = viewRef.current;
+    const graphic = selected === null ? null : graphicsRef.current[selected];
+    if (!view || !graphic || selected === null) return;
+    const polygon = graphic.geometry as Polygon;
+    view
+      .goTo({ target: polygon.extent!.expand(2.5) }, { duration: 600 })
+      .then(() =>
+        view.openPopup({
+          title: propsRef.current.labels[selected] ?? `Parcel ${selected + 1}`,
+          content: popupHtml(propsRef.current.features?.[selected]?.properties ?? {}),
+          location: polygon.centroid ?? polygon.extent!.center,
+        }),
+      )
+      .catch(() => undefined);
+  }, [selected]);
+
+  return <div ref={containerRef} className="absolute inset-0" aria-label="Map of the parcels" />;
 }
 
-function highlightStyle(state: PolygonState) {
-  return { color: "#ffa800", weight: 3, opacity: 1, fillColor: COLORS[state], fillOpacity: state === "skip" ? 0.15 : 0.6, dashArray: undefined };
-}
-
-/** Breathing room around fitted geometry. */
-function fitPadding(): { paddingTopLeft: [number, number]; paddingBottomRight: [number, number] } {
-  return { paddingTopLeft: [48, 48], paddingBottomRight: [48, 48] };
-}
-
-function popupHtml(title: string, properties: Record<string, unknown>): string {
-  const { __i, ...attrs } = properties;
-  const entries = Object.entries(attrs);
-  const rows = entries
-    .slice(0, MAX_POPUP_ROWS)
-    .map(
-      ([k, v]) =>
-        `<tr><td style="padding:3px 14px 3px 0;color:#6b6b6b;vertical-align:top">${escapeHtml(k)}</td><td style="padding:3px 0;color:#000">${escapeHtml(formatValue(v))}</td></tr>`,
-    )
-    .join("");
-  const more = entries.length > MAX_POPUP_ROWS ? `<p style="margin:6px 0 0;color:#6b6b6b">${entries.length - MAX_POPUP_ROWS} more fields</p>` : "";
-  return `<div style="font-size:15px;font-weight:300;color:#000">${escapeHtml(title)}</div>
-<div style="color:#078ece;font-size:12px;margin:2px 0 10px">Polygon ${Number(__i) + 1}</div>
-${rows ? `<table style="font-size:12px">${rows}</table>` : `<p style="color:#6b6b6b">No attributes in the file</p>`}${more}`;
+function popupHtml(properties: Record<string, unknown>): HTMLElement {
+  const entries = Object.entries(properties).filter(([k]) => !k.startsWith("__"));
+  const table = document.createElement("table");
+  table.style.fontSize = "12px";
+  for (const [k, v] of entries.slice(0, MAX_POPUP_ROWS)) {
+    const row = table.insertRow();
+    const key = row.insertCell();
+    key.textContent = k;
+    key.style.cssText = "padding:3px 14px 3px 0;color:#6b6b6b;vertical-align:top";
+    const value = row.insertCell();
+    value.textContent = formatValue(v);
+  }
+  if (entries.length === 0) table.insertRow().insertCell().textContent = "No attributes in the file";
+  return table;
 }
 
 function formatValue(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   return String(value);
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }

@@ -58,6 +58,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ a
       layer={layer}
       user={{ fullName: session.fullName, username: session.username }}
       maxRequestBytes={getUploadLimits().maxRequestBytes}
+      map={{ portalUrl: config.webMapPortalUrl, webMapId: config.webMapId }}
     />
   );
 }

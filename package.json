@@ -13,9 +13,9 @@
     "test:e2e": "npm run build && tsx --test tests/e2e/*.test.ts"
   },
   "dependencies": {
+    "@arcgis/core": "^5.1.26",
     "@turf/area": "^7.4.0",
     "@turf/kinks": "^7.4.0",
-    "leaflet": "^1.9.4",
     "next": "^16.3.8",
     "proj4": "^2.22.0",
     "react": "^19.3.0",
@@ -27,7 +27,6 @@
     "@mapbox/shp-write": "^0.4.3",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/geojson": "^7946.0.16",
-    "@types/leaflet": "^1.9.22",
     "@types/node": "^26.6.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

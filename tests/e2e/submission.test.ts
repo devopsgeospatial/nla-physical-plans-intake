@@ -354,10 +354,12 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     const stored = (await records()).filter((r) => objectIds.includes(r.OBJECTID));
     assert.ok(stored.every((r) => r.remarks == null && r.approval_date == null), "NLA fields are not taken from the file");
 
-    let page = await (await planner.get(`${APP}/submissions`)).text();
+    // React separates text parts with <!-- --> markers; drop them to assert on what the planner reads.
+    let page = (await (await planner.get(`${APP}/submissions`)).text()).replace(/<!-- -->/g, "");
     assert.match(page, /My submissions/);
-    // Newest submission first, as the planner sees it.
-    assert.match(page, /<ul[^>]*>.*?PP-REVIEW-1.*?Waiting for NLA/s);
+    // Newest submission first, as the planner sees it (titled by date; no IDs shown).
+    assert.match(page, /<ul[^>]*><li[^>]*>.*?Waiting for NLA.*?2 parcels/s);
+    assert.doesNotMatch(page.match(/<ul[^>]*>.*?<\/ul>/s)![0], /PP-REVIEW-1|OBJECTID/);
 
     // An NLA reviewer comments on the first parcel, attaches a document, and approves the second parcel.
     const review = new FormData();
@@ -374,7 +376,6 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
 
     page = await (await planner.get(`${APP}/submissions`)).text();
     const first = page.match(/<ul[^>]*><li[^>]*>(.*?)<\/li>/s)![1]!.replace(/<!-- -->/g, "");
-    assert.match(first, /PP-REVIEW-1/);
     assert.match(first, /Partly approved 1\/2/);
     // Two PDFs are attached to the parcel; only the reviewer's counts as a document from NLA.
     assert.match(first, /1 document from NLA/);
@@ -392,7 +393,7 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     await other.signIn("planner.huye");
     assert.equal((await other.get(`${APP}/api/plans/attachment?oid=${objectIds[0]}&aid=${ownDoc.id}`)).status, 404);
     assert.equal((await (await other.get(`${APP}/api/plans/mine/parcels?oids=${objectIds.join(",")}`)).json()).features.length, 0);
-    assert.doesNotMatch(await (await other.get(`${APP}/submissions`)).text(), /PP-REVIEW-1/);
+    assert.doesNotMatch(await (await other.get(`${APP}/submissions`)).text(), /Widen the road reserve/);
   });
 
   it("signs out and revokes the session", async () => {

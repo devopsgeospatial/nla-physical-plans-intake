@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { parseUploadFile, UploadValidationError, type ParsedUpload, type UploadFeature } from "@/lib/geo/parse-upload";
 import { findValueErrors, mapFields, type LayerFieldInfo } from "@/lib/plans/attribute-mapping";
+import type { MapSettings } from "@/lib/arcgis/config";
 import { uploadFingerprints, type DuplicateMatch } from "@/lib/plans/duplicates";
 import AppHeader from "./AppHeader";
 
@@ -71,11 +72,13 @@ export default function UploadWorkspace({
   layer,
   user,
   maxRequestBytes,
+  map,
 }: {
   layer: LayerSummary;
   user: { fullName: string; username: string };
   /** Largest submission the server accepts (file + PDFs), so oversize uploads are caught before sending. */
   maxRequestBytes: number;
+  map: MapSettings;
 }) {
   const [upload, setUpload] = useState<FileState>({ kind: "empty" });
   const [documents, setDocuments] = useState<File[]>([]);
@@ -258,7 +261,6 @@ export default function UploadWorkspace({
                 <p className="text-[15px] text-ink">
                   {submit.result.objectIds.length.toLocaleString()} parcel{submit.result.objectIds.length === 1 ? "" : "s"} added
                 </p>
-                <p className="mt-0.5 text-[12px] text-graphite">OBJECTID {formatIdRange(submit.result.objectIds)}</p>
               </div>
             )}
           </div>
@@ -284,6 +286,7 @@ export default function UploadWorkspace({
 
         <div className="relative h-[45dvh] shrink-0 lg:h-auto lg:flex-1">
           <UploadPreviewMap
+            map={map}
             features={parsed?.features ?? null}
             labels={parsed?.features.map(featureLabel) ?? []}
             hovered={null}
@@ -390,14 +393,6 @@ function Indicator({ value, label, divider }: { value: string; label: string; di
 
 function addUnique(existing: File[], added: File[]): File[] {
   return [...existing, ...added.filter((f) => !existing.some((p) => p.name === f.name && p.size === f.size))];
-}
-
-/** "1, 2, 3" for a few IDs; "1001–3212" for long consecutive runs. */
-function formatIdRange(ids: number[]): string {
-  if (ids.length <= 6) return ids.join(", ");
-  const sorted = [...ids].sort((a, b) => a - b);
-  const consecutive = sorted.every((id, i) => i === 0 || id === sorted[i - 1]! + 1);
-  return consecutive ? `${sorted[0]}–${sorted[sorted.length - 1]}` : `${sorted.slice(0, 5).join(", ")} …`;
 }
 
 function formatSize(bytes: number): string {

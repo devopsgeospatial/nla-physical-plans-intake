@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "leaflet/dist/leaflet.css";
+@import "@arcgis/core/assets/esri/themes/light/main.css";
 
 /*
  * Visual language of the Rwanda Spatial Data Hub (geodata.rw, run by NLA): slate-teal header bar,
@@ -72,62 +72,14 @@ body {
   animation: progress 1.1s ease-in-out infinite;
 }
 
-/* ---- Leaflet ---------------------------------------------------------------------------------- */
-.leaflet-container {
-  background: #1a1a1a;
+/* ---- ArcGIS map: square corners, hub type ----------------------------------------------------- */
+.esri-view {
+  --calcite-font-family: var(--font-sans);
+  --calcite-corner-radius: 0;
+}
+.esri-view .esri-view-surface:focus::after {
+  outline: none;
+}
+.esri-popup {
   font-family: var(--font-sans);
-}
-.leaflet-bar {
-  border: 0 !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-.leaflet-bar a {
-  background: #fff !important;
-  color: #000 !important;
-  border-bottom: 1px solid var(--color-hairline) !important;
-  border-radius: 0 !important;
-  width: 36px !important;
-  height: 36px !important;
-  line-height: 36px !important;
-  font-weight: 300;
-}
-.leaflet-bar a:hover {
-  background: var(--color-nla-tint) !important;
-}
-.leaflet-control-attribution {
-  background: rgb(255 255 255 / 0.85) !important;
-  color: #555 !important;
-  font-size: 10px !important;
-}
-.leaflet-control-scale-line {
-  background: rgb(255 255 255 / 0.85);
-  color: #000;
-  border-color: #000;
-  font-size: 10px;
-}
-.leaflet-popup-content-wrapper {
-  border-radius: 0;
-  box-shadow: 0 1px 0 var(--color-hairline), 0 12px 32px rgb(0 0 0 / 0.25);
-}
-.leaflet-popup-tip {
-  box-shadow: none;
-}
-.leaflet-popup-content {
-  margin: 16px 18px;
-  font-size: 12px;
-}
-.plan-label {
-  background: var(--color-hub);
-  border: 0;
-  color: #fff;
-  border-radius: 0;
-  padding: 0 6px;
-  font: 600 11px/18px var(--font-sans);
-  min-width: 18px;
-  text-align: center;
-  box-shadow: none;
-}
-.plan-label::before {
-  display: none;
 }
