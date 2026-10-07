@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import { parseUploadFile, UploadValidationError, type ParsedUpload, type UploadFeature } from "@/lib/geo/parse-upload";
 import { findValueErrors, mapFields, type LayerFieldInfo } from "@/lib/plans/attribute-mapping";
 import { uploadFingerprints, type DuplicateMatch } from "@/lib/plans/duplicates";
+import AppHeader from "./AppHeader";
 
 const UploadPreviewMap = dynamic(() => import("./UploadPreviewMap"), {
   ssr: false,
@@ -189,17 +190,7 @@ export default function UploadWorkspace({
 
   return (
     <div className="flex h-dvh flex-col bg-night">
-      <header className="relative z-[1001] flex h-14 shrink-0 items-center justify-between gap-4 bg-hub px-5 text-white">
-        <h1 className="truncate text-[17px]">Physical Plan Submission</h1>
-        <div className="flex items-center gap-4">
-          <span className="hidden text-[14px] sm:inline">{user.fullName}</span>
-          <form action="/api/auth/logout" method="post">
-            <button type="submit" className="h-8 border border-white/45 px-3.5 text-[13px] transition hover:bg-white/10">
-              Sign out
-            </button>
-          </form>
-        </div>
-      </header>
+      <AppHeader active="submit" fullName={user.fullName} />
 
       <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
         <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col bg-paper lg:w-[360px] lg:flex-none">

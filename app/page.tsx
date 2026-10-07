@@ -71,7 +71,9 @@ function HubScreen({ children }: { children: ReactNode }) {
       <header className="flex h-16 shrink-0 items-center bg-hub px-6 sm:px-10">
         <p className="text-[17px] text-white">Physical Plan Submission</p>
       </header>
-      <div className="flex flex-1 items-start justify-center px-4 py-12 sm:items-center sm:py-16">
+      <div className="flex flex-1 flex-col items-center justify-start px-4 py-10 sm:justify-center sm:py-14">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/rwanda-emblem.png" alt="Republic of Rwanda" width={117} height={128} className="mb-8 h-[128px] w-[117px]" />
         <section className="w-full max-w-[460px] bg-[rgb(90_90_90/0.4)] px-7 py-9 sm:px-9">{children}</section>
       </div>
     </main>

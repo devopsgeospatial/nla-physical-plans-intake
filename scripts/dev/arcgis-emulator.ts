@@ -51,7 +51,7 @@ const TEST_USERS: TestUser[] = [
 interface StoredFeature {
   attributes: Record<string, unknown>;
   geometry: unknown;
-  attachments: { id: number; name: string; contentType: string; data: Buffer }[];
+  attachments: { id: number; name: string; contentType: string; keywords: string; data: Buffer }[];
 }
 
 const features = new Map<number, StoredFeature>();
@@ -292,6 +292,15 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
     if (sub === "/query") return sendJson(res, query(params));
 
+    if (sub === "/queryAttachments") {
+      const ids = (params.get("objectIds") ?? "").split(",").map(Number).filter(Boolean);
+      const attachmentGroups = ids
+        .map((oid) => ({ oid, f: features.get(oid) }))
+        .filter(({ f }) => f && f.attachments.length > 0)
+        .map(({ oid, f }) => ({ parentObjectId: oid, parentGlobalId: null, attachmentInfos: f!.attachments.map(attachmentInfo) }));
+      return sendJson(res, { fields: [], attachmentGroups });
+    }
+
     const match = sub.match(/^\/(\d+)\/(addAttachment|attachments)(?:\/(\d+))?$/);
     const feature = match ? features.get(Number(match[1])) : undefined;
     if (match && !feature) return sendJson(res, arcgisError(404, `Feature ${match[1]} not found.`));
@@ -301,12 +310,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
         const file = form?.get("attachment");
         if (!(file instanceof File)) return sendJson(res, arcgisError(400, "Missing 'attachment' part."));
         const id = nextAttachmentId++;
-        feature.attachments.push({ id, name: file.name, contentType: file.type || "application/pdf", data: Buffer.from(await file.arrayBuffer()) });
+        const keywords = params.get("keywords") ?? "";
+        feature.attachments.push({ id, name: file.name, contentType: file.type || "application/pdf", keywords, data: Buffer.from(await file.arrayBuffer()) });
         console.log(`[emulator] attachment ${id} (${file.name}, ${file.size} B) -> feature ${match[1]}`);
         return sendJson(res, { addAttachmentResult: { objectId: id, globalId: `{${crypto.randomUUID().toUpperCase()}}`, success: true } });
       }
       if (!match[3]) {
-        return sendJson(res, { attachmentInfos: feature.attachments.map((a) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.data.length })) });
+        return sendJson(res, { attachmentInfos: feature.attachments.map(attachmentInfo) });
       }
       const att = feature.attachments.find((a) => a.id === Number(match[3]));
       if (!att) return sendJson(res, arcgisError(404, "Attachment not found."));
@@ -319,6 +329,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   // ---- Dev viewer --------------------------------------------------------------------------------
   if (path === "/") return renderIndex(res);
   if (path === "/stats.json") return sendJson(res, { ...stats, queryCalls });
+
+  // DEV: act as an NLA reviewer on one record. Multipart/form fields: oid, remarks?, approval_date? (YYYY-MM-DD),
+  // attachment? (a file, added without the planner keyword, i.e. as a document from NLA).
+  if (path === "/dev/respond" && req.method === "POST") {
+    const feature = features.get(Number(params.get("oid")));
+    if (!feature) return sendJson(res, arcgisError(404, "No such record."), 404);
+    if (params.has("remarks")) feature.attributes.remarks = params.get("remarks") || null;
+    if (params.get("approval_date")) feature.attributes.approval_date = Date.parse(`${params.get("approval_date")}T00:00:00Z`);
+    const file = form?.get("attachment");
+    if (file instanceof File) {
+      feature.attachments.push({ id: nextAttachmentId++, name: file.name, contentType: file.type || "application/pdf", keywords: "", data: Buffer.from(await file.arrayBuffer()) });
+    }
+    return sendJson(res, { ok: true, attributes: feature.attributes, attachments: feature.attachments.map(attachmentInfo) });
+  }
   if (path === "/records.json") {
     return sendJson(res, [...features.values()].map((f) => ({ ...f.attributes, attachments: f.attachments.map((x) => x.name), geometry: f.geometry })));
   }
@@ -340,15 +364,8 @@ const toWgs84 = proj4(TM_RWANDA_WKT, "EPSG:4326");
  */
 function query(params: URLSearchParams) {
   const where = (params.get("where") ?? "1=1").trim();
-  let predicate: (attrs: Record<string, unknown>) => boolean = () => true;
-  const inClause = where.match(/^UPPER\((\w+)\) IN \((.*)\)$/i);
-  if (inClause) {
-    const [, field, list] = inClause;
-    const values = new Set([...list!.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1]!.replace(/''/g, "'")));
-    predicate = (attrs) => values.has(String(attrs[field!] ?? "").toUpperCase());
-  } else if (where !== "1=1") {
-    return arcgisError(400, `Emulator does not support where clause: ${where}`);
-  }
+  const predicate = parseWhere(where);
+  if (!predicate) return arcgisError(400, `Emulator does not support where clause: ${where}`);
 
   const envelope = params.get("geometry") ? (JSON.parse(params.get("geometry")!) as { xmin: number; ymin: number; xmax: number; ymax: number }) : null;
   const wgs = (rings: number[][][]) => rings.map((r) => r.map(([x, y]) => toWgs84.forward([x!, y!])));
@@ -361,6 +378,11 @@ function query(params: URLSearchParams) {
     return Math.min(...xs) <= envelope.xmax && Math.max(...xs) >= envelope.xmin && Math.min(...ys) <= envelope.ymax && Math.max(...ys) >= envelope.ymin;
   });
 
+  const orderBy = params.get("orderByFields")?.match(/^(\w+)( DESC)?$/i);
+  if (orderBy) {
+    const [, field, desc] = orderBy;
+    matches.sort((a, b) => (Number(a.attributes[field!] ?? 0) - Number(b.attributes[field!] ?? 0)) * (desc ? -1 : 1));
+  }
   const offset = Number(params.get("resultOffset") ?? 0);
   const pageSize = Math.min(Number(params.get("resultRecordCount") ?? 2000), 2000);
   const page = matches.slice(offset, offset + pageSize);
@@ -381,6 +403,43 @@ function query(params: URLSearchParams) {
   };
 }
 let queryCalls = 0;
+
+/**
+ * The where clauses the app sends: "1=1", or predicates joined by AND:
+ *   UPPER(f) IN ('a','b') · f = 'text' · f = 123 · f IN (1,2,3)
+ */
+function parseWhere(where: string): ((attrs: Record<string, unknown>) => boolean) | null {
+  if (where === "1=1") return () => true;
+  const strings = (list: string) => [...list.matchAll(/'((?:[^']|'')*)'/g)].map((m) => m[1]!.replace(/''/g, "'"));
+  const parts = where.split(/\s+AND\s+(?=(?:[^']*'[^']*')*[^']*$)/i);
+  const tests: ((attrs: Record<string, unknown>) => boolean)[] = [];
+  for (const part of parts) {
+    let m: RegExpMatchArray | null;
+    if ((m = part.match(/^UPPER\((\w+)\) IN \((.*)\)$/i))) {
+      const [, field, list] = m;
+      const values = new Set(strings(list!));
+      tests.push((a) => values.has(String(a[field!] ?? "").toUpperCase()));
+    } else if ((m = part.match(/^(\w+) = '((?:[^']|'')*)'$/))) {
+      const [, field, value] = m;
+      const v = value!.replace(/''/g, "'");
+      tests.push((a) => String(a[field!] ?? "") === v);
+    } else if ((m = part.match(/^(\w+) = (-?\d+)$/))) {
+      const [, field, value] = m;
+      tests.push((a) => Number(a[field!]) === Number(value));
+    } else if ((m = part.match(/^(\w+) IN \(([\d,\s]+)\)$/i))) {
+      const [, field, list] = m;
+      const values = new Set(list!.split(",").map((x) => Number(x.trim())));
+      tests.push((a) => values.has(Number(a[field!])));
+    } else {
+      return null;
+    }
+  }
+  return (attrs) => tests.every((t) => t(attrs));
+}
+
+function attachmentInfo(a: StoredFeature["attachments"][number]) {
+  return { id: a.id, name: a.name, contentType: a.contentType, size: a.data.length, keywords: a.keywords };
+}
 
 function issueAccessToken(username: string) {
   const token = randomBytes(24).toString("base64url");

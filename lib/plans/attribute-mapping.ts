@@ -23,6 +23,19 @@ export const AUTO_FIELDS = {
   createdDate: "created_date",
 } as const;
 
+/**
+ * Fields reserved for NLA's response to a submission: the reviewer sets approval_date when a plan is
+ * approved and writes the response in remarks. Values for them in a planner's file are never copied,
+ * so a planner's own text can't be mistaken for an NLA response.
+ */
+export const NLA_RESPONSE_FIELDS = {
+  approvalDate: "approval_date",
+  comment: "remarks",
+} as const;
+
+/** Keyword on attachments a planner uploaded; any other attachment on their parcels came from NLA. */
+export const PLANNER_ATTACHMENT_KEYWORD = "planner-submission";
+
 /** Filled from the polygon (in the layer's grid) when the file does not provide a value. */
 export const AREA_FIELD = "area_sqm";
 
@@ -46,7 +59,7 @@ export interface FieldMapping {
   matched: FieldMatch[];
   /** File fields with no writable counterpart in the layer. */
   ignored: string[];
-  /** File fields that correspond to fields the app fills automatically. */
+  /** File fields that correspond to fields the app fills itself or reserves for NLA's response. */
   automatic: string[];
 }
 
@@ -56,7 +69,7 @@ export function writableFields(fields: LayerFieldInfo[]): LayerFieldInfo[] {
 
 export function mapFields(fileFields: string[], layerFields: LayerFieldInfo[]): FieldMapping {
   const writable = writableFields(layerFields);
-  const autoNames = new Set<string>(Object.values(AUTO_FIELDS));
+  const autoNames = new Set<string>([...Object.values(AUTO_FIELDS), ...Object.values(NLA_RESPONSE_FIELDS)]);
   const mapping: FieldMapping = { matched: [], ignored: [], automatic: [] };
   const used = new Set<string>();
 

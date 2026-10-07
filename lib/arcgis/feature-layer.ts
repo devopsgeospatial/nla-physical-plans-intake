@@ -61,6 +61,18 @@ export interface QueryFeature {
   geometry?: { rings?: number[][][] };
 }
 
+export interface AttachmentInfo {
+  id: number;
+  name: string;
+  contentType?: string;
+  size?: number;
+  keywords?: string | null;
+}
+
+interface QueryAttachmentsResponse {
+  attachmentGroups?: { parentObjectId: number; attachmentInfos?: AttachmentInfo[] }[];
+}
+
 interface QueryResponse {
   features?: QueryFeature[];
   exceededTransferLimit?: boolean;
@@ -137,12 +149,12 @@ export class FeatureLayerClient {
     return results.map((r) => ({ objectId: r.objectId, globalId: r.globalId ?? null }));
   }
 
-  async addAttachment(objectId: number, file: Blob, fileName: string): Promise<AddedAttachment> {
+  async addAttachment(objectId: number, file: Blob, fileName: string, keywords?: string): Promise<AddedAttachment> {
     const url = `${this.layerUrl}/${objectId}/addAttachment`;
     const response = await withToken(this.tokens, (token) =>
       arcgisRequest<AddAttachmentResponse>(
         url,
-        {},
+        keywords ? { keywords } : {},
         { referer: this.tokens.referer, token, files: { attachment: { blob: file, fileName } }, timeoutMs: 180_000 },
       ),
     );
@@ -180,6 +192,32 @@ export class FeatureLayerClient {
       features.push(...(page.features ?? []));
       if (!page.exceededTransferLimit || (page.features ?? []).length === 0) return features;
     }
+  }
+
+  /** Attachment metadata (name, size, keywords) for the given features, grouped by feature. */
+  async queryAttachments(objectIds: number[]): Promise<Map<number, AttachmentInfo[]>> {
+    const byFeature = new Map<number, AttachmentInfo[]>();
+    const url = `${this.layerUrl}/queryAttachments`;
+    for (let i = 0; i < objectIds.length; i += 500) {
+      const chunk = objectIds.slice(i, i + 500);
+      const response = await withToken(this.tokens, (token) =>
+        arcgisRequest<QueryAttachmentsResponse>(url, { objectIds: chunk.join(","), returnMetadata: true }, { referer: this.tokens.referer, token }),
+      );
+      for (const group of response.attachmentGroups ?? []) byFeature.set(group.parentObjectId, group.attachmentInfos ?? []);
+    }
+    return byFeature;
+  }
+
+  /** Downloads one attachment's bytes (the REST endpoint streams the file itself, not JSON). */
+  async downloadAttachment(objectId: number, attachmentId: number): Promise<Response> {
+    const token = await this.tokens.getToken();
+    const url = `${this.layerUrl}/${objectId}/attachments/${attachmentId}?token=${encodeURIComponent(token)}`;
+    const response = await fetch(url, { headers: { Referer: this.tokens.referer }, cache: "no-store", signal: AbortSignal.timeout(120_000) });
+    const type = response.headers.get("content-type") ?? "";
+    if (!response.ok || type.includes("json")) {
+      throw new ArcGisRequestError(`Attachment ${attachmentId} of feature ${objectId} could not be downloaded.`, `${this.layerUrl}/${objectId}/attachments/${attachmentId}`, response.status);
+    }
+    return response;
   }
 
   /** Compensating delete used to roll back features whose append could not be completed. */

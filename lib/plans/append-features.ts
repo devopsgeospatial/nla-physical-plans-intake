@@ -15,7 +15,16 @@ import {
   type EsriSpatialReference,
 } from "../geo/esri-geometry";
 import type { ParsedUpload, UploadFeature } from "../geo/parse-upload";
-import { AREA_FIELD, AUTO_FIELDS, coerceValue, mapFields, writableFields, type AttributeValue, type FieldMapping } from "./attribute-mapping";
+import {
+  AREA_FIELD,
+  AUTO_FIELDS,
+  coerceValue,
+  mapFields,
+  PLANNER_ATTACHMENT_KEYWORD,
+  writableFields,
+  type AttributeValue,
+  type FieldMapping,
+} from "./attribute-mapping";
 import { findDuplicates, uploadFingerprints, type DuplicateMatch } from "./duplicates";
 import { loadExistingParcels } from "./existing-parcels";
 
@@ -159,7 +168,8 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
 
     // PDFs go on the first appended record only; the other records get no attachments.
     const firstObjectId = objectIds[0]!;
-    const jobs = request.documents.map((doc) => () => layer.addAttachment(firstObjectId, doc.file, doc.fileName));
+    // Tagged so the "My submissions" view can tell the planner's own PDFs from documents NLA attaches later.
+    const jobs = request.documents.map((doc) => () => layer.addAttachment(firstObjectId, doc.file, doc.fileName, PLANNER_ATTACHMENT_KEYWORD));
     await runWithConcurrency(jobs, ATTACHMENT_CONCURRENCY);
   } catch (err) {
     if (objectIds.length === 0) throw err;

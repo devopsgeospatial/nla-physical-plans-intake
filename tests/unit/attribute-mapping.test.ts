@@ -20,11 +20,17 @@ const LAYER: LayerFieldInfo[] = [
 
 describe("mapFields", () => {
   it("matches case-insensitively and resolves 10-character DBF truncations", () => {
-    const m = mapFields(["PLAN_ID", "planning_s", "approval_d", "District_1"], LAYER);
+    const m = mapFields(["PLAN_ID", "planning_s", "zone_code", "District_1"], LAYER);
     assert.deepEqual(
       m.matched.map((x) => [x.fileField, x.layerField.name]),
-      [["PLAN_ID", "plan_id"], ["planning_s", "planning_status"], ["approval_d", "approval_date"], ["District_1", "district_1"]],
+      [["PLAN_ID", "plan_id"], ["planning_s", "planning_status"], ["zone_code", "zone_code"], ["District_1", "district_1"]],
     );
+  });
+
+  it("keeps NLA's response fields (approval_date, remarks) out of the copied attributes", () => {
+    const m = mapFields(["approval_d", "Remarks", "plan_id"], LAYER);
+    assert.deepEqual(m.matched.map((x) => x.layerField.name), ["plan_id"]);
+    assert.deepEqual(m.automatic, ["approval_d", "Remarks"]);
   });
 
   it("ignores unknown, read-only and ambiguous fields, and flags automatic ones", () => {

@@ -99,3 +99,17 @@ function isClockwise(ring: readonly (readonly [number, number])[]): boolean {
   }
   return sum > 0;
 }
+
+/**
+ * Esri JSON rings (WGS84) → GeoJSON. Esri marks exterior rings clockwise and holes counter-clockwise;
+ * each hole is attached to the exterior ring before it, which is how ArcGIS writes them.
+ */
+export function esriRingsToGeoJson(rings: number[][][]): Polygon | MultiPolygon {
+  const polygons: Position[][][] = [];
+  for (const ring of rings) {
+    const xy = ring.map((p) => [p[0]!, p[1]!] as [number, number]);
+    if (isClockwise(xy) || polygons.length === 0) polygons.push([[...xy].reverse()]);
+    else polygons[polygons.length - 1]!.push([...xy].reverse());
+  }
+  return polygons.length === 1 ? { type: "Polygon", coordinates: polygons[0]! } : { type: "MultiPolygon", coordinates: polygons };
+}

@@ -333,6 +333,68 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal(r.body.field, "documents");
   });
 
+  it("shows planners NLA's response and documents on their own submissions only", async () => {
+    const planner = new Browser();
+    await planner.signIn("planner.muhanga");
+    const plan = JSON.stringify({
+      type: "FeatureCollection",
+      features: [0, 1].map((i) => ({
+        type: "Feature",
+        // remarks/approval_date are NLA's fields: the planner's values must not be stored.
+        properties: { plan_id: "PP-REVIEW-1", parcel_upi: `REVIEW-${i}`, district_1: "Muhanga", remarks: "planner text", approval_date: "2026-01-01" },
+        geometry: { type: "Polygon", coordinates: [[[29.79 + i * 0.001, -2.07], [29.7905 + i * 0.001, -2.07], [29.7905 + i * 0.001, -2.0695], [29.79 + i * 0.001, -2.07]]] },
+      })),
+    });
+    const res = await planner.request(`${APP}/api/plans/submit`, {
+      method: "POST",
+      body: await upload({ file: ["review.geojson", "application/geo+json", new Blob([plan])], documents: PDF }),
+    });
+    const { objectIds } = await res.json();
+    assert.equal(res.status, 201);
+    const stored = (await records()).filter((r) => objectIds.includes(r.OBJECTID));
+    assert.ok(stored.every((r) => r.remarks == null && r.approval_date == null), "NLA fields are not taken from the file");
+
+    let page = await (await planner.get(`${APP}/submissions`)).text();
+    assert.match(page, /My submissions/);
+    // Newest submission first, as the planner sees it.
+    assert.match(page, /<ul[^>]*>.*?PP-REVIEW-1.*?Waiting for NLA/s);
+
+    // An NLA reviewer comments on the first parcel, attaches a document, and approves the second parcel.
+    const review = new FormData();
+    review.set("oid", String(objectIds[0]));
+    review.set("remarks", "Widen the road reserve to 12 m");
+    review.set("attachment", new Blob([await readFile("samples/sample-plan-document.pdf")], { type: "application/pdf" }), "nla-review.pdf");
+    const reviewed = await (await fetch(`${emulatorUrl}/dev/respond`, { method: "POST", body: review })).json();
+    const nlaDoc = reviewed.attachments.find((a: { name: string }) => a.name === "nla-review.pdf");
+    const ownDoc = reviewed.attachments.find((a: { name: string }) => a.name === "sample-plan-document.pdf");
+    const approve = new FormData();
+    approve.set("oid", String(objectIds[1]));
+    approve.set("approval_date", "2026-10-09");
+    await fetch(`${emulatorUrl}/dev/respond`, { method: "POST", body: approve });
+
+    page = await (await planner.get(`${APP}/submissions`)).text();
+    const first = page.match(/<ul[^>]*><li[^>]*>(.*?)<\/li>/s)![1]!.replace(/<!-- -->/g, "");
+    assert.match(first, /PP-REVIEW-1/);
+    assert.match(first, /Partly approved 1\/2/);
+    // Two PDFs are attached to the parcel; only the reviewer's counts as a document from NLA.
+    assert.match(first, /1 document from NLA/);
+    assert.match(page, /Widen the road reserve to 12 m/, "NLA's comment is in the page data");
+
+    // Downloads and parcel shapes are limited to the planner's own submissions.
+    const file = await planner.get(`${APP}/api/plans/attachment?oid=${objectIds[0]}&aid=${nlaDoc.id}&name=nla-review.pdf`);
+    assert.equal(file.status, 200);
+    assert.match(Buffer.from(await file.arrayBuffer()).subarray(0, 5).toString(), /%PDF-/);
+    const shapes = await (await planner.get(`${APP}/api/plans/mine/parcels?oids=${objectIds.join(",")}`)).json();
+    assert.equal(shapes.features.length, 2);
+    assert.equal(shapes.features[1].properties.approval_date, "2026-10-09");
+
+    const other = new Browser();
+    await other.signIn("planner.huye");
+    assert.equal((await other.get(`${APP}/api/plans/attachment?oid=${objectIds[0]}&aid=${ownDoc.id}`)).status, 404);
+    assert.equal((await (await other.get(`${APP}/api/plans/mine/parcels?oids=${objectIds.join(",")}`)).json()).features.length, 0);
+    assert.doesNotMatch(await (await other.get(`${APP}/submissions`)).text(), /PP-REVIEW-1/);
+  });
+
   it("signs out and revokes the session", async () => {
     const planner = new Browser();
     await planner.signIn("planner.muhanga");
