@@ -26,6 +26,7 @@ export const EMULATOR_PORTAL_URL = `${ORIGIN}/portal`;
 const LAYER_PATH = "/arcgis/rest/services/Physical_Plans/FeatureServer/0";
 export const EMULATOR_LAYER_URL = `${ORIGIN}${LAYER_PATH}`;
 export const EMULATOR_GROUP_ID = "devplansubmitters";
+export const EMULATOR_REVIEWER_GROUP_ID = "devplanreviewers";
 export const EMULATOR_PASSWORD = "rla-test";
 
 /** Same custom grid as the real Physical_Plans reference layer (TM Rwanda / ITRF2005). */
@@ -38,13 +39,17 @@ interface TestUser {
   description: string;
   privileges: string[];
   groups: { id: string; title: string }[];
+  role?: string;
 }
 
 const SUBMITTERS = { id: EMULATOR_GROUP_ID, title: "Plan Submitters (dev)" };
+const REVIEWERS = { id: EMULATOR_REVIEWER_GROUP_ID, title: "Plan Reviewers (dev)" };
 const TEST_USERS: TestUser[] = [
   { username: "planner.muhanga", fullName: "Muhanga Planner", description: "Creator in Plan Submitters: can submit", privileges: ["features:user:edit", "portal:user:createItem"], groups: [SUBMITTERS] },
   { username: "planner.huye", fullName: "Huye Planner", description: "Contributor in Plan Submitters: can submit", privileges: ["features:user:edit"], groups: [SUBMITTERS] },
   { username: "viewer.only", fullName: "Viewer Account", description: "Viewer user type: refused (no edit privilege)", privileges: ["portal:user:joinGroup"], groups: [SUBMITTERS] },
+  { username: "reviewer.nla", fullName: "NLA Reviewer", description: "In Plan Reviewers: can use the review app", privileges: ["features:user:edit"], groups: [REVIEWERS] },
+  { username: "admin.nla", fullName: "NLA Administrator", description: "Organization administrator: can use the review app", privileges: ["features:user:edit"], groups: [], role: "org_admin" },
   { username: "outsider", fullName: "Other Staff", description: "Not in Plan Submitters: refused (group check)", privileges: ["features:user:edit"], groups: [] },
 ];
 
@@ -60,6 +65,8 @@ const refreshTokens = new Map<string, string>(); // refresh token -> username
 const accessTokens = new Map<string, { username: string; expiresAt: number }>();
 let nextObjectId = 1;
 const stats = { simplifyCalls: 0, simplifiedGeometries: 0 };
+/** DEV: when true the geometry service answers "Invalid token" (POST /dev/geometry-service?refuse=1|0). */
+let geometryServiceRefuses = false;
 const GEOMETRY_SERVER_PATH = "/arcgis/rest/services/Utilities/Geometry/GeometryServer";
 let nextAttachmentId = 1;
 
@@ -242,7 +249,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     const username = authenticate(params);
     if (!username) return sendJson(res, arcgisError(498, "Invalid token."));
     const user = TEST_USERS.find((u) => u.username === username)!;
-    return sendJson(res, { username: user.username, fullName: user.fullName, orgId: "devorg", privileges: user.privileges, groups: user.groups });
+    return sendJson(res, { username: user.username, fullName: user.fullName, orgId: "devorg", role: user.role ?? "org_user", privileges: user.privileges, groups: user.groups });
+  }
+
+  const profile = path.match(/^\/portal\/sharing\/rest\/community\/users\/([^/]+)$/);
+  if (profile) {
+    if (!authenticate(params)) return sendJson(res, arcgisError(498, "Invalid token."));
+    const user = TEST_USERS.find((u) => u.username === decodeURIComponent(profile[1]!));
+    return sendJson(res, user ? { username: user.username, fullName: user.fullName } : arcgisError(400, "User not found."));
   }
 
   if (path === "/portal/sharing/rest/portals/self") {
@@ -251,7 +265,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   if (path === `${GEOMETRY_SERVER_PATH}/simplify`) {
-    if (!authenticate(params)) return sendJson(res, arcgisError(498, "Invalid token."));
+    if (!authenticate(params) || geometryServiceRefuses) return sendJson(res, arcgisError(498, "Invalid token."));
     const input = JSON.parse(params.get("geometries") ?? "{}") as { geometries?: { rings: number[][][] }[] };
     const geometries = input.geometries ?? [];
     stats.simplifyCalls++;
@@ -270,6 +284,19 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (sub === "/applyEdits") {
       const adds = JSON.parse(params.get("adds") ?? "[]") as { geometry: unknown; attributes: Record<string, unknown> }[];
       const deletes = JSON.parse(params.get("deletes") ?? "[]") as number[];
+      const updates = JSON.parse(params.get("updates") ?? "[]") as { attributes: Record<string, unknown> }[];
+      if (updates.length > 0) {
+        const problem = updates.map((u) => (features.has(Number(u.attributes?.OBJECTID)) ? validateAttributes(withoutObjectId(u.attributes)) : "No such feature.")).find(Boolean);
+        if (problem) return sendJson(res, { addResults: [], updateResults: updates.map((u) => ({ objectId: Number(u.attributes?.OBJECTID), success: false, error: { code: 1000, description: problem } })), deleteResults: [] });
+        const updateResults = updates.map((u) => {
+          const feature = features.get(Number(u.attributes.OBJECTID))!;
+          // Editor tracking, as on the hosted layer.
+          Object.assign(feature.attributes, u.attributes, { last_edited_user: username, last_edited_date: Date.now() });
+          return { objectId: Number(u.attributes.OBJECTID), success: true };
+        });
+        console.log(`[emulator] applyEdits by ${username}: ~${updateResults.length}`);
+        return sendJson(res, { addResults: [], updateResults, deleteResults: [] });
+      }
       // rollbackOnFailure semantics: validate everything first, then add all or nothing.
       const problems = adds.map((add) => validateAttributes(add.attributes ?? {}));
       if (problems.some(Boolean)) {
@@ -342,6 +369,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       feature.attachments.push({ id: nextAttachmentId++, name: file.name, contentType: file.type || "application/pdf", keywords: "", data: Buffer.from(await file.arrayBuffer()) });
     }
     return sendJson(res, { ok: true, attributes: feature.attributes, attachments: feature.attachments.map(attachmentInfo) });
+  }
+  if (path === "/dev/geometry-service" && req.method === "POST") {
+    geometryServiceRefuses = (params.get("refuse") ?? url.searchParams.get("refuse")) === "1";
+    return sendJson(res, { refuses: geometryServiceRefuses });
   }
   if (path === "/records.json") {
     return sendJson(res, [...features.values()].map((f) => ({ ...f.attributes, attachments: f.attachments.map((x) => x.name), geometry: f.geometry })));
@@ -482,4 +513,9 @@ export function startEmulator(): Promise<http.Server> {
     server.once("error", reject);
     server.listen(EMULATOR_PORT, () => resolve(server));
   });
+}
+
+/** Updates name the feature by OBJECTID, which is not itself an editable field. */
+function withoutObjectId(attributes: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(attributes).filter(([k]) => k !== "OBJECTID"));
 }

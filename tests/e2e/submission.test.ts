@@ -6,16 +6,21 @@
  */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { after, before, describe, it } from "node:test";
 
 const APP_PORT = 3199;
 const APP = `http://localhost:${APP_PORT}`;
+/** The review app: the same build started with APP_MODE=review. */
+const REVIEW_PORT = 3198;
+const REVIEW = `http://localhost:${REVIEW_PORT}`;
 process.env.EMULATOR_PORT = "4199";
 
 let emulator: Server;
 let app: ChildProcess;
+let reviewApp: ChildProcess;
 let emulatorUrl: string;
 
 before(async () => {
@@ -23,32 +28,39 @@ before(async () => {
   emulatorUrl = `http://localhost:${mod.EMULATOR_PORT}`;
   emulator = await mod.startEmulator();
 
-  // The production server exactly as deployed (standalone bundle, see npm run build).
-  app = spawn(process.execPath, [".next/standalone/server.js"], {
-    stdio: ["ignore", "ignore", "inherit"],
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      PORT: String(APP_PORT),
-      HOSTNAME: "127.0.0.1",
-      ARCGIS_PORTAL_URL: mod.EMULATOR_PORTAL_URL,
-      ARCGIS_FEATURE_LAYER_URL: mod.EMULATOR_LAYER_URL,
-      ARCGIS_OAUTH_CLIENT_ID: "e2e",
-      ARCGIS_ALLOWED_GROUP_ID: mod.EMULATOR_GROUP_ID,
-      ARCGIS_OAUTH_REDIRECT_URI: `${APP}/api/auth/callback`,
-      APP_URL: APP,
-      SESSION_SECRET: "e2e-session-secret-that-is-long-enough-123",
-    },
-  });
-  for (let i = 0; i < 60; i++) {
-    if (await fetch(APP).then(() => true, () => false)) return;
-    await new Promise((r) => setTimeout(r, 500));
+  // The production server exactly as deployed (standalone bundle, see npm run build). Both apps share
+  // SESSION_SECRET on purpose: a session must still only work in the app that issued it.
+  const start = (port: number, url: string, extra: Record<string, string>) =>
+    spawn(process.execPath, [".next/standalone/server.js"], {
+      stdio: ["ignore", "ignore", "inherit"],
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        PORT: String(port),
+        HOSTNAME: "127.0.0.1",
+        ARCGIS_PORTAL_URL: mod.EMULATOR_PORTAL_URL,
+        ARCGIS_FEATURE_LAYER_URL: mod.EMULATOR_LAYER_URL,
+        ARCGIS_OAUTH_CLIENT_ID: "e2e",
+        ARCGIS_OAUTH_REDIRECT_URI: `${url}/api/auth/callback`,
+        APP_URL: url,
+        SESSION_SECRET: "e2e-session-secret-that-is-long-enough-123",
+        ...extra,
+      },
+    });
+  app = start(APP_PORT, APP, { ARCGIS_ALLOWED_GROUP_ID: mod.EMULATOR_GROUP_ID });
+  reviewApp = start(REVIEW_PORT, REVIEW, { APP_MODE: "review", ARCGIS_REVIEWER_GROUP_ID: mod.EMULATOR_REVIEWER_GROUP_ID });
+  for (const url of [APP, REVIEW]) {
+    for (let i = 0; ; i++) {
+      if (await fetch(url).then(() => true, () => false)) break;
+      if (i === 60) throw new Error("app did not start; run `npm run build` first");
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
-  throw new Error("app did not start; run `npm run build` first");
 });
 
 after(() => {
   app?.kill();
+  reviewApp?.kill();
   emulator?.close();
 });
 
@@ -56,13 +68,15 @@ after(() => {
 class Browser {
   private cookies = new Map<string, string>();
 
+  constructor(readonly base = APP) {}
+
   async get(url: string): Promise<Response> {
     return this.request(url, { method: "GET" });
   }
 
   async request(url: string, init: RequestInit): Promise<Response> {
     const headers = new Headers(init.headers);
-    if (url.startsWith(APP) && this.cookies.size) {
+    if (url.startsWith(this.base) && this.cookies.size) {
       headers.set("cookie", [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; "));
     }
     const res = await fetch(url, { ...init, headers, redirect: "manual" });
@@ -78,7 +92,7 @@ class Browser {
 
   /** Follows the full sign-in round trip, choosing `user` on the emulator's login page. Returns the final app URL. */
   async signIn(user: string): Promise<URL> {
-    let res = await this.get(`${APP}/api/auth/login`);
+    let res = await this.get(`${this.base}/api/auth/login`);
     assert.equal(res.status, 307);
     const authorize = new URL(res.headers.get("location")!);
     assert.equal(authorize.searchParams.get("code_challenge_method"), "S256");
@@ -92,6 +106,11 @@ class Browser {
 
   get signedIn(): boolean {
     return this.cookies.has("pp_session");
+  }
+
+  /** This browser's cookies, to replay against the other app. */
+  get cookieHeader(): string {
+    return [...this.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
   }
 }
 
@@ -222,6 +241,33 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal(statsAfter.simplifiedGeometries - statsBefore.simplifiedGeometries, 1, "only the flagged parcel is sent to simplify");
     const stored = (await records()).filter((r) => r.plan_id === "PP-BULK-1");
     assert.equal(stored.length, 2_500);
+  });
+
+  it("still submits when the geometry service refuses the token (password sign-in): repairs locally, never asks to sign in again", async () => {
+    // Password sign-in, as planners use it (no refresh token).
+    const planner = new Browser();
+    const form = new URLSearchParams({ username: "planner.huye", password: "rla-test" });
+    const signIn = await planner.request(`${APP}/api/auth/password`, { method: "POST", body: form, headers: { "content-type": "application/x-www-form-urlencoded", origin: APP } });
+    assert.equal(signIn.status, 303);
+    assert.ok(planner.signedIn);
+
+    await fetch(`${emulatorUrl}/dev/geometry-service?refuse=1`, { method: "POST" });
+    try {
+      const bowtie = [[29.71, -2.2], [29.7102, -2.1998], [29.7102, -2.2], [29.71, -2.1998], [29.71, -2.2]];
+      const plan = { type: "FeatureCollection", features: [{ type: "Feature", properties: { parcel_upi: "TOKEN-REFUSED-1", plan_id: "PP-REPAIR-LOCAL" }, geometry: { type: "Polygon", coordinates: [bowtie] } }] };
+      const res = await planner.request(`${APP}/api/plans/submit`, {
+        method: "POST",
+        body: await upload({ file: ["repair.geojson", "application/geo+json", new Blob([JSON.stringify(plan)])] }),
+      });
+      const body = await res.json();
+      assert.equal(res.status, 201, JSON.stringify(body));
+      assert.equal(body.repairedCount, 1);
+      const stored = (await records()).find((r) => r.plan_id === "PP-REPAIR-LOCAL")!;
+      // The figure-eight is stored as its two loops.
+      assert.equal(stored.geometry.rings.length, 2);
+    } finally {
+      await fetch(`${emulatorUrl}/dev/geometry-service?refuse=0`, { method: "POST" });
+    }
   });
 
   it("is all-or-nothing: if an attachment fails, the appended records are removed again", async () => {
@@ -376,7 +422,8 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
 
     page = await (await planner.get(`${APP}/submissions`)).text();
     const first = page.match(/<ul[^>]*><li[^>]*>(.*?)<\/li>/s)![1]!.replace(/<!-- -->/g, "");
-    assert.match(first, /Partly approved 1\/2/);
+    // A parcel with NLA's comment and no approval date is returned: the planner has to act.
+    assert.match(first, /Returned for changes/);
     // Two PDFs are attached to the parcel; only the reviewer's counts as a document from NLA.
     assert.match(first, /1 document from NLA/);
     assert.match(page, /Widen the road reserve to 12 m/, "NLA's comment is in the page data");
@@ -394,6 +441,94 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal((await other.get(`${APP}/api/plans/attachment?oid=${objectIds[0]}&aid=${ownDoc.id}`)).status, 404);
     assert.equal((await (await other.get(`${APP}/api/plans/mine/parcels?oids=${objectIds.join(",")}`)).json()).features.length, 0);
     assert.doesNotMatch(await (await other.get(`${APP}/submissions`)).text(), /Widen the road reserve/);
+  });
+
+  it("NLA reviews in the review app: return with comments, revised plan, approval", async () => {
+    // A planner submits two parcels with a PDF.
+    const planner = new Browser();
+    await planner.signIn("planner.huye");
+    const plan = (shift: number) =>
+      JSON.stringify({
+        type: "FeatureCollection",
+        features: [0, 1].map((i) => ({
+          type: "Feature",
+          properties: { plan_id: "PP-HUYE-1", parcel_upi: `HUYE-${i}`, district_1: "Huye" },
+          geometry: { type: "Polygon", coordinates: [[[29.75 + i * 0.001, -2.6], [29.7505 + i * 0.001 + shift, -2.6], [29.7505 + i * 0.001, -2.5995], [29.75 + i * 0.001, -2.6]]] },
+        })),
+      });
+    const send = (body: string, replaces?: number) =>
+      upload({ file: ["huye.geojson", "application/geo+json", new Blob([body])], documents: PDF }).then((form) => {
+        if (replaces !== undefined) form.set("replaces", String(replaces));
+        return planner.request(`${APP}/api/plans/submit`, { method: "POST", body: form });
+      });
+    let res = await send(plan(0));
+    assert.equal(res.status, 201);
+    const first = (await res.json()).objectIds as number[];
+    const submittedAt = (await records()).find((r) => r.OBJECTID === first[0])!.created_date as number;
+
+    // Only NLA reviewers get into the review app; the planner's session is not accepted there.
+    assert.match((await new Browser(REVIEW).signIn("planner.huye")).search, /auth_error=.*not\+an\+NLA\+plan\+reviewer/);
+    const decide = (who: Browser | string, fields: Record<string, string>, pdf?: boolean) => {
+      const form = new FormData();
+      for (const [k, v] of Object.entries(fields)) form.set(k, v);
+      if (pdf) form.append("documents", new Blob([readFileSync("samples/sample-plan-document.pdf")], { type: "application/pdf" }), "nla-comments.pdf");
+      return typeof who === "string"
+        ? fetch(`${REVIEW}/api/review/decision`, { method: "POST", body: form, headers: { cookie: who } })
+        : who.request(`${REVIEW}/api/review/decision`, { method: "POST", body: form });
+    };
+    const target = { planner: "planner.huye", submittedAt: String(submittedAt) };
+    assert.equal((await decide(planner.cookieHeader, { ...target, decision: "approve" })).status, 401);
+    assert.equal((await fetch(`${APP}/api/review/decision`, { method: "POST", body: new FormData() })).status, 404);
+
+    const reviewer = new Browser(REVIEW);
+    assert.equal((await reviewer.signIn("reviewer.nla")).pathname, "/");
+    let page = (await (await reviewer.get(`${REVIEW}/`)).text()).replace(/<!-- -->/g, "");
+    assert.match(page, /Physical Plan Review/);
+    assert.match(page, /Huye Planner.*?To review/s, "the queue shows the planner's full name");
+    // Reviewer sessions are not accepted by the submission app either.
+    assert.equal((await fetch(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: GEOJSON }), headers: { cookie: reviewer.cookieHeader } })).status, 401);
+
+    // Returning needs a comment; the comment and NLA's PDF go back to the planner.
+    assert.equal((await decide(reviewer, { ...target, decision: "return" })).status, 422);
+    res = await decide(reviewer, { ...target, decision: "return", comment: "Parcel HUYE-1 overlaps the wetland buffer" }, true);
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).submission.status, "returned");
+    let stored = (await records()).filter((r) => first.includes(r.OBJECTID));
+    assert.ok(stored.every((r) => r.remarks === "Parcel HUYE-1 overlaps the wetland buffer" && r.approval_date == null && r.last_edited_user === "reviewer.nla"));
+    assert.deepEqual(stored[0]!.attachments.sort(), ["nla-comments.pdf", "sample-plan-document.pdf"]);
+
+    page = (await (await planner.get(`${APP}/submissions`)).text()).replace(/<!-- -->/g, "");
+    assert.match(page.match(/<ul[^>]*><li[^>]*>(.*?)<\/li>/s)![1]!, /Returned for changes/);
+    assert.match(page, /overlaps the wetland buffer/);
+    page = (await (await planner.get(`${APP}/?revise=${submittedAt}`)).text()).replace(/<!-- -->/g, "");
+    assert.match(page, /Revised plan/);
+
+    // The revised plan replaces the returned parcels (same UPIs, so not refused as duplicates) and keeps NLA's PDF.
+    res = await send(plan(0.0001), submittedAt);
+    const revised = await res.json();
+    assert.equal(res.status, 201, JSON.stringify(revised));
+    assert.equal(revised.objectIds.length, 2);
+    assert.equal(revised.replacedCount, 2);
+    const all = await records();
+    assert.ok(!all.some((r) => first.includes(r.OBJECTID)), "returned parcels are replaced");
+    stored = all.filter((r) => revised.objectIds.includes(r.OBJECTID));
+    assert.ok(stored.every((r) => r.remarks == null && r.approval_date == null), "the revision waits for NLA again");
+    assert.deepEqual(stored[0]!.attachments.sort(), ["nla-comments.pdf", "sample-plan-document.pdf"]);
+    assert.equal((await send(plan(0), submittedAt)).status, 409, "a submission is revised once");
+
+    // NLA approves the revision: approval_date is what the public map filters on.
+    const revisedAt = String(stored[0]!.created_date);
+    res = await decide(reviewer, { planner: "planner.huye", submittedAt: revisedAt, decision: "approve" });
+    assert.equal(res.status, 200);
+    stored = (await records()).filter((r) => revised.objectIds.includes(r.OBJECTID));
+    assert.ok(stored.every((r) => typeof r.approval_date === "number" && r.remarks == null));
+    assert.equal((await decide(reviewer, { planner: "planner.huye", submittedAt: revisedAt, decision: "approve" })).status, 409);
+    page = (await (await planner.get(`${APP}/submissions`)).text()).replace(/<!-- -->/g, "");
+    assert.match(page.match(/<ul[^>]*><li[^>]*>(.*?)<\/li>/s)![1]!, /Approved/);
+
+    // Reviewers can open any planner's documents and parcels.
+    const doc = await reviewer.get(`${REVIEW}/api/plans/mine/parcels?oids=${revised.objectIds.join(",")}`);
+    assert.equal((await doc.json()).features.length, 2);
   });
 
   it("signs out and revokes the session", async () => {

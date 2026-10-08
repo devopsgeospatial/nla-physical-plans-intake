@@ -6,6 +6,7 @@ import { createUserTokenProvider } from "@/lib/auth/oauth";
 import { readSession, SESSION_COOKIE, seal, sessionCookieOptions } from "@/lib/auth/session";
 import { MAX_FEATURES } from "@/lib/geo/parse-upload";
 import { findDuplicates, type Fingerprint } from "@/lib/plans/duplicates";
+import { loadReplaceable, RevisionError } from "@/lib/plans/append-features";
 import { loadExistingParcels } from "@/lib/plans/existing-parcels";
 
 export const runtime = "nodejs";
@@ -19,23 +20,30 @@ export const maxDuration = 60;
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const config = getArcGisConfig();
-  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config.sessionSecret);
+  if (config.appMode !== "submission") return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
+  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
   if (!session) return NextResponse.json({ ok: false, error: "Please sign in.", signInRequired: true }, { status: 401 });
 
-  const body = (await request.json().catch(() => null)) as { items?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { items?: unknown; replaces?: unknown } | null;
   const items = Array.isArray(body?.items) ? (body.items as unknown[]) : null;
-  if (!items || items.length > MAX_FEATURES || !items.every(isFingerprint)) {
+  const replaces = body?.replaces;
+  const validReplaces = replaces === undefined || (typeof replaces === "number" && Number.isInteger(replaces) && replaces > 0);
+  if (!items || items.length > MAX_FEATURES || !items.every(isFingerprint) || !validReplaces) {
     return NextResponse.json({ ok: false, error: "Invalid request." }, { status: 400 });
   }
 
   const tokens = createUserTokenProvider(config, session);
   try {
     const layer = new FeatureLayerClient(config.featureLayerUrl, tokens);
-    const existing = await loadExistingParcels(layer, await layer.getMetadata(), items);
+    const meta = await layer.getMetadata();
+    // A revised plan replaces the returned parcels: they are not duplicates of it.
+    const replaced = new Set(replaces === undefined ? [] : (await loadReplaceable(layer, meta, session.username, replaces as number)).objectIds);
+    const existing = (await loadExistingParcels(layer, meta, items)).filter((p) => !replaced.has(p.objectId));
     const response = NextResponse.json({ ok: true, duplicates: findDuplicates(items, existing), compared: existing.length });
     if (tokens.refreshed) response.cookies.set(SESSION_COOKIE, seal(tokens.session, config.sessionSecret), sessionCookieOptions(tokens.session));
     return response;
   } catch (err) {
+    if (err instanceof RevisionError) return NextResponse.json({ ok: false, error: err.message }, { status: 409 });
     console.error("[duplicates]", err);
     const message = err instanceof ArcGisRequestError ? err.message : "Duplicate check failed.";
     return NextResponse.json({ ok: false, error: message }, { status: 502 });

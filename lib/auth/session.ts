@@ -19,6 +19,8 @@ export interface UserSession {
   refreshToken: string;
   /** epoch ms */
   refreshExpiresAt: number;
+  /** Signed in to the review app (checked at sign-in against the reviewer group). */
+  reviewer?: boolean;
 }
 
 export interface OAuthState {
@@ -49,9 +51,15 @@ export function unseal<T>(sealed: string | undefined, secret: string): T | null 
   }
 }
 
-export function readSession(sealed: string | undefined, secret: string): UserSession | null {
-  const session = unseal<UserSession>(sealed, secret);
+/**
+ * The signed-in user, or null. A session only works in the app it was issued by: a planner's cookie
+ * is never accepted by the review app (and the reverse), even when both share SESSION_SECRET.
+ */
+export function readSession(sealed: string | undefined, config: { sessionSecret: string; appMode: string }): UserSession | null {
+  const session = unseal<UserSession>(sealed, config.sessionSecret);
   if (!session || session.refreshExpiresAt <= Date.now()) return null;
+  if (config.appMode !== "submission" && config.appMode !== "review") return null; // the landing page and public viewer have no sign-in
+  if (!!session.reviewer !== (config.appMode === "review")) return null;
   return session;
 }
 

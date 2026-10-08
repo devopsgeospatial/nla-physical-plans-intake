@@ -59,6 +59,8 @@ export type AttributeValue = string | number | null;
 export interface QueryFeature {
   attributes: Record<string, unknown>;
   geometry?: { rings?: number[][][] };
+  /** With returnCentroid=true. */
+  centroid?: { x: number; y: number };
 }
 
 export interface AttachmentInfo {
@@ -149,6 +151,20 @@ export class FeatureLayerClient {
     return results.map((r) => ({ objectId: r.objectId, globalId: r.globalId ?? null }));
   }
 
+  /** Updates attributes of existing features in one applyEdits call with rollbackOnFailure. */
+  async updateFeatures(updates: { attributes: Record<string, AttributeValue> }[]): Promise<void> {
+    if (updates.length === 0) return;
+    const url = `${this.layerUrl}/applyEdits`;
+    const response = await withToken(this.tokens, (token) =>
+      arcgisRequest<ApplyEditsResponse>(url, { updates, rollbackOnFailure: true }, { referer: this.tokens.referer, token, timeoutMs: 180_000 }),
+    );
+    const results = response.updateResults ?? [];
+    const failed = results.find((r) => !r.success);
+    if (failed || results.length !== updates.length) {
+      throw new ArcGisRequestError(`applyEdits could not update the records: ${failed?.error?.description ?? "unexpected response"}`, url, failed?.error?.code);
+    }
+  }
+
   async addAttachment(objectId: number, file: Blob, fileName: string, keywords?: string): Promise<AddedAttachment> {
     const url = `${this.layerUrl}/${objectId}/addAttachment`;
     const response = await withToken(this.tokens, (token) =>
@@ -211,7 +227,8 @@ export class FeatureLayerClient {
   /** Downloads one attachment's bytes (the REST endpoint streams the file itself, not JSON). */
   async downloadAttachment(objectId: number, attachmentId: number): Promise<Response> {
     const token = await this.tokens.getToken();
-    const url = `${this.layerUrl}/${objectId}/attachments/${attachmentId}?token=${encodeURIComponent(token)}`;
+    // Public layers are read without a token.
+    const url = `${this.layerUrl}/${objectId}/attachments/${attachmentId}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
     const response = await fetch(url, { headers: { Referer: this.tokens.referer }, cache: "no-store", signal: AbortSignal.timeout(120_000) });
     const type = response.headers.get("content-type") ?? "";
     if (!response.ok || type.includes("json")) {

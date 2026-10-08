@@ -3,16 +3,15 @@ import { getArcGisConfig } from "@/lib/arcgis/config";
 import { FeatureLayerClient } from "@/lib/arcgis/feature-layer";
 import { createUserTokenProvider } from "@/lib/auth/oauth";
 import { readSession, SESSION_COOKIE } from "@/lib/auth/session";
-import { AUTO_FIELDS } from "@/lib/plans/attribute-mapping";
-import { sqlString } from "@/lib/plans/my-submissions";
+import { ownerFilter } from "@/lib/plans/submissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Streams one attachment of a parcel the signed-in planner submitted (owner check first). */
+/** Streams one attachment of a parcel the signed-in planner submitted (owner check first), or any parcel for a reviewer. */
 export async function GET(request: NextRequest): Promise<NextResponse | Response> {
   const config = getArcGisConfig();
-  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config.sessionSecret);
+  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
   if (!session) return NextResponse.json({ ok: false, error: "Please sign in." }, { status: 401 });
 
   const objectId = Number(request.nextUrl.searchParams.get("oid"));
@@ -24,9 +23,8 @@ export async function GET(request: NextRequest): Promise<NextResponse | Response
   try {
     const layer = new FeatureLayerClient(config.featureLayerUrl, createUserTokenProvider(config, session));
     const meta = await layer.getMetadata();
-    const createdUser = meta.fields.find((f) => f.name.toLowerCase() === AUTO_FIELDS.createdUser)?.name ?? AUTO_FIELDS.createdUser;
     const owned = await layer.queryAll({
-      where: `${meta.objectIdField} = ${objectId} AND ${createdUser} = ${sqlString(session.username)}`,
+      where: `${ownerFilter(meta, config, session)}${meta.objectIdField} = ${objectId}`,
       outFields: meta.objectIdField,
       returnGeometry: false,
     });

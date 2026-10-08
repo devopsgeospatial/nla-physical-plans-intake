@@ -49,5 +49,6 @@ export async function signInWithPassword(config: ArcGisConfig, username: string,
     accessExpiresAt: expiresAt,
     refreshToken: "",
     refreshExpiresAt: expiresAt,
+    reviewer: config.appMode === "review",
   };
 }

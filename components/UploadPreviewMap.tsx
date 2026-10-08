@@ -32,10 +32,10 @@ interface Props {
 
 type PolygonState = "plan" | "saved" | "repair" | "skip";
 
-// Hub blue for new parcels, amber for the selected one, red for self-crossing, white outline for duplicates.
+// NLA blue for new parcels, deep blue once saved, red for self-crossing, white outline for duplicates.
 const FILL: Record<PolygonState, [number, number, number, number]> = {
-  plan: [13, 115, 176, 0.45],
-  saved: [47, 191, 113, 0.45],
+  plan: [23, 160, 219, 0.42],
+  saved: [11, 95, 138, 0.5],
   repair: [255, 77, 77, 0.45],
   skip: [255, 255, 255, 0],
 };
@@ -46,7 +46,7 @@ const FIT_PADDING = { top: 48, right: 48, bottom: 48, left: 48 };
 
 function symbolFor(state: PolygonState, highlighted: boolean): SimpleFillSymbol {
   if (highlighted) {
-    return new SimpleFillSymbol({ color: [...FILL[state].slice(0, 3), state === "skip" ? 0.15 : 0.6] as number[], outline: { color: [255, 168, 0, 1], width: 3 } });
+    return new SimpleFillSymbol({ color: [...FILL[state].slice(0, 3), state === "skip" ? 0.15 : 0.6] as number[], outline: { color: [255, 255, 255, 1], width: 3.5 } });
   }
   return new SimpleFillSymbol({
     color: FILL[state],
@@ -135,7 +135,7 @@ export default function UploadPreviewMap({ map, features, labels, hovered, selec
           const at = (g.geometry as Polygon).centroid ?? (g.geometry as Polygon).extent!.center;
           return new Graphic({
             geometry: at,
-            symbol: new TextSymbol({ text: String(i + 1), color: "white", haloColor: [25, 52, 67, 1], haloSize: 2, font: { size: 10, weight: "bold" } }),
+            symbol: new TextSymbol({ text: String(i + 1), color: "white", haloColor: [11, 79, 115, 1], haloSize: 2, font: { size: 10, weight: "bold" } }),
             attributes: { __i: i, label: true },
           });
         }),

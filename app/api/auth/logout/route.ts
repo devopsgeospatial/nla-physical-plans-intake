@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 /** Clears the session cookie and revokes the refresh token (best effort). */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const config = getArcGisConfig();
-  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config.sessionSecret);
+  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
   if (session) {
     await arcgisRequest(
       `${config.portalUrl}/sharing/rest/oauth2/revokeToken`,

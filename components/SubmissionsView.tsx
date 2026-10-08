@@ -4,22 +4,17 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import type { MapSettings } from "@/lib/arcgis/config";
 import type { UploadFeature } from "@/lib/geo/parse-upload";
-import type { Submission, SubmissionDocument, SubmissionStatus } from "@/lib/plans/my-submissions";
-import AppHeader from "./AppHeader";
+import type { Submission, SubmissionDocument } from "@/lib/plans/submissions";
+import AppHeader, { submissionTabs } from "./AppHeader";
+import { formatSize } from "./FileInputs";
+import StatusTag, { formatDateTime } from "./StatusTag";
 
 const UploadPreviewMap = dynamic(() => import("./UploadPreviewMap"), {
   ssr: false,
-  loading: () => <div className="absolute inset-0 bg-[#1a1a1a]" />,
+  loading: () => <div className="absolute inset-0 bg-[#eef2f5]" />,
 });
 
 const NO_SKIPS: ReadonlySet<number> = new Set();
-
-const STATUS: Record<SubmissionStatus, { label: string; className: string }> = {
-  waiting: { label: "Waiting for NLA", className: "bg-[#ececec] text-graphite" },
-  responded: { label: "NLA responded", className: "bg-nla-tint text-nla" },
-  partly_approved: { label: "Partly approved", className: "bg-[#fff3d6] text-warn" },
-  approved: { label: "Approved", className: "bg-[#e3f3e8] text-ok" },
-};
 
 export default function SubmissionsView({
   submissions,
@@ -56,8 +51,8 @@ export default function SubmissionsView({
   }, [open]);
 
   return (
-    <div className="flex h-dvh flex-col bg-night">
-      <AppHeader active="submissions" fullName={fullName} />
+    <div className="flex h-dvh flex-col bg-white">
+      <AppHeader title="Physical Plan Submission" tabs={submissionTabs("submissions")} fullName={fullName} />
 
       <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
         <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col bg-paper lg:w-[360px] lg:flex-none">
@@ -76,7 +71,7 @@ export default function SubmissionsView({
                         <button type="button" onClick={() => setOpenId(s.submittedAt)} className="w-full px-5 py-3.5 text-left transition hover:bg-mist">
                           <span className="flex items-start justify-between gap-3">
                             <span className="min-w-0 truncate text-[15px] text-ink">{formatDateTime(s.submittedAt)}</span>
-                            <StatusTag submission={s} />
+                            <StatusTag submission={s} audience="planner" />
                           </span>
                           <span className="mt-1.5 block text-[12px] text-graphite">
                             {s.objectIds.length} parcel{s.objectIds.length === 1 ? "" : "s"}
@@ -109,7 +104,7 @@ export default function SubmissionsView({
                     {open.districts.length > 0 && ` · ${open.districts.join(", ")}`}
                   </p>
                   <div className="mt-3">
-                    <StatusTag submission={open} large />
+                    <StatusTag submission={open} audience="planner" large />
                   </div>
                 </div>
 
@@ -122,6 +117,14 @@ export default function SubmissionsView({
                     ))
                   ) : (
                     <p className="text-[14px] text-graphite">{open.status === "approved" ? "Approved without comment." : "No response yet."}</p>
+                  )}
+                  {open.status === "returned" && (
+                    <a
+                      href={`/?revise=${open.submittedAt}`}
+                      className="mt-1 flex h-11 w-full items-center justify-center rounded-lg bg-nla font-semibold text-[15px] text-white transition hover:bg-[#096a97]"
+                    >
+                      Submit a revised plan
+                    </a>
                   )}
                 </Block>
 
@@ -145,7 +148,7 @@ export default function SubmissionsView({
           </div>
 
           <div className="border-t border-hairline p-5">
-            <a href="/submissions" className="flex h-11 w-full items-center justify-center border border-nla text-[15px] text-nla transition hover:bg-nla hover:text-white">
+            <a href="/submissions" className="flex h-11 w-full items-center justify-center rounded-lg border border-nla text-[15px] text-nla transition hover:bg-nla hover:text-white">
               Refresh
             </a>
           </div>
@@ -168,23 +171,7 @@ export default function SubmissionsView({
   );
 }
 
-function StatusTag({ submission, large }: { submission: Submission; large?: boolean }) {
-  const s = STATUS[submission.status];
-  const detail =
-    submission.status === "partly_approved"
-      ? ` ${submission.approvedCount}/${submission.objectIds.length}`
-      : submission.status === "approved" && submission.approvedAt && large
-        ? ` · ${formatDate(submission.approvedAt)}`
-        : "";
-  return (
-    <span className={`inline-block shrink-0 whitespace-nowrap px-2 py-0.5 ${large ? "text-[13px]" : "text-[11px]"} ${s.className}`}>
-      {s.label}
-      {detail}
-    </span>
-  );
-}
-
-function Block({ title, children }: { title: string; children: React.ReactNode }) {
+export function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
       <h2 className="text-[13px] text-graphite">{title}</h2>
@@ -193,7 +180,7 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function DocumentLink({ doc, muted }: { doc: SubmissionDocument; muted?: boolean }) {
+export function DocumentLink({ doc, muted }: { doc: SubmissionDocument; muted?: boolean }) {
   const href = `/api/plans/attachment?oid=${doc.objectId}&aid=${doc.attachmentId}&name=${encodeURIComponent(doc.name)}`;
   return (
     <a
@@ -209,19 +196,4 @@ function DocumentLink({ doc, muted }: { doc: SubmissionDocument; muted?: boolean
       <span className={`shrink-0 text-[13px] ${muted ? "text-graphite" : "text-nla"}`}>Open</span>
     </a>
   );
-}
-
-const KIGALI = "Africa/Kigali";
-
-function formatDateTime(ms: number): string {
-  if (!ms) return "Date unknown";
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: KIGALI }).format(ms);
-}
-
-function formatDate(ms: number): string {
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: KIGALI }).format(ms);
-}
-
-function formatSize(bytes: number): string {
-  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 }

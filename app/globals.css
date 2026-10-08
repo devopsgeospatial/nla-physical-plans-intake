@@ -1,27 +1,29 @@
 @import "tailwindcss";
+/* Reference mock-ups (large, with embedded images) are not part of the app. */
+@source not "../*.html";
 @import "@arcgis/core/assets/esri/themes/light/main.css";
 
 /*
- * Visual language of the Rwanda Spatial Data Hub (geodata.rw, run by NLA): slate-teal header bar,
- * near-black band with a grey panel, white content, Avenir Next, square #0D73B0 buttons, amber accent.
+ * One palette for every app: clean white surfaces, slate text and a single blue family from the NLA
+ * logo (#17A0DB for highlights, #0B7FB5 for buttons and links). Figtree throughout.
  */
 @theme {
-  --font-sans: "Avenir Next", Avenir, var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
 
-  --color-hub: #193443;
-  --color-ink: #110e0e;
-  --color-night: #090808;
+  --color-hub: #ffffff;
+  --color-ink: #14212b;
+  --color-night: #f6f8fa;
   --color-slab: #2b2b2b;
-  --color-graphite: #4c4c4c;
-  --color-hairline: #e7e7e7;
+  --color-graphite: #51626f;
+  --color-hairline: #e6ebef;
   --color-paper: #ffffff;
-  --color-mist: #f5f5f5;
-  --color-silver: #d3d3d3;
+  --color-mist: #f6f8fa;
+  --color-silver: #8a99a5;
 
-  --color-nla: #0d73b0;
-  --color-nla-light: #5aaedd;
-  --color-nla-tint: #eaf3f9;
-  --color-amber: #ffa800;
+  --color-nla: #0b7fb5;
+  --color-nla-light: #17a0db;
+  --color-nla-tint: #eaf6fc;
+  --color-amber: #17a0db;
 
   --color-alert: #c62828;
   --color-warn: #a15c00;
@@ -83,3 +85,50 @@ body {
 .esri-popup {
   font-family: var(--font-sans);
 }
+
+/* ---- Public viewer: white views that slide and fade smoothly --------------------------------- */
+.pp-swap {
+  animation: pp-swap 0.4s cubic-bezier(0.22, 0.8, 0.2, 1) both;
+}
+@keyframes pp-swap {
+  from { opacity: 0; transform: translateY(8px); }
+}
+.pp-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #d5dee5 transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pp * { animation-duration: 0.01s !important; animation-delay: 0s !important; transition-duration: 0.01s !important; }
+}
+
+/* ---- Landing page (after landlogic.ai) --------------------------------------------------------- */
+html:has(.ll-landing) {
+  scroll-behavior: smooth;
+}
+.ll-rise {
+  animation: pp-swap 0.9s cubic-bezier(0.22, 0.8, 0.2, 1) both;
+}
+.ll-glow {
+  background:
+    radial-gradient(60% 55% at 12% 70%, rgba(0, 170, 255, 0.32), transparent 70%),
+    radial-gradient(45% 50% at 88% 75%, rgba(28, 211, 150, 0.4), transparent 70%),
+    radial-gradient(40% 40% at 70% 20%, rgba(0, 170, 255, 0.14), transparent 70%),
+    linear-gradient(180deg, #f6fbfd 0%, #eef7fa 60%, #ffffff 100%);
+}
+.ll-marquee {
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+.ll-marquee-track {
+  animation: ll-marquee 60s linear infinite;
+}
+@keyframes ll-marquee {
+  to { transform: translateX(-50%); }
+}
+.ll-pop {
+  animation: pp-swap 0.25s cubic-bezier(0.22, 0.8, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ll-rise, .ll-marquee-track, .ll-pop { animation: none; }
+  html:has(.ll-landing) { scroll-behavior: auto; }
+}
+

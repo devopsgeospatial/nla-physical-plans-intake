@@ -4,15 +4,14 @@ import { FeatureLayerClient } from "@/lib/arcgis/feature-layer";
 import { createUserTokenProvider } from "@/lib/auth/oauth";
 import { readSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { esriRingsToGeoJson } from "@/lib/geo/esri-geometry";
-import { AUTO_FIELDS } from "@/lib/plans/attribute-mapping";
-import { sqlString } from "@/lib/plans/my-submissions";
+import { ownerFilter } from "@/lib/plans/submissions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_IDS = 5_000;
-/** What a planner sees when clicking one of their parcels. */
-const POPUP_FIELDS = ["plan_id", "parcel_upi", "zoning", "district_1", "sector_1", "cell_1", "approval_date", "remarks"];
+/** What a planner or reviewer sees when clicking a submitted parcel. */
+const POPUP_FIELDS = ["plan_id", "parcel_upi", "gen_lu", "zone_code", "zoning", "planning_status", "area_sqm", "district_1", "sector_1", "cell_1", "approval_date", "remarks"];
 
 function popupProperties(attributes: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -26,10 +25,10 @@ function popupProperties(attributes: Record<string, unknown>): Record<string, un
   return out;
 }
 
-/** Parcel shapes (WGS84 GeoJSON) for a submission, limited to parcels the signed-in planner submitted. */
+/** Parcel shapes (WGS84 GeoJSON) for a submission: a planner's own parcels only; any parcel for a reviewer. */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const config = getArcGisConfig();
-  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config.sessionSecret);
+  const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
   if (!session) return NextResponse.json({ ok: false, error: "Please sign in." }, { status: 401 });
 
   const ids = (request.nextUrl.searchParams.get("oids") ?? "")
@@ -42,9 +41,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const layer = new FeatureLayerClient(config.featureLayerUrl, createUserTokenProvider(config, session));
     const meta = await layer.getMetadata();
-    const createdUser = meta.fields.find((f) => f.name.toLowerCase() === AUTO_FIELDS.createdUser)?.name ?? AUTO_FIELDS.createdUser;
     const rows = await layer.queryAll({
-      where: `${createdUser} = ${sqlString(session.username)} AND ${meta.objectIdField} IN (${ids.join(",")})`,
+      where: `${ownerFilter(meta, config, session)}${meta.objectIdField} IN (${ids.join(",")})`,
       outFields: "*", // trimmed to POPUP_FIELDS below (field names vary in case between layers)
       returnGeometry: true,
       outSR: 4326,

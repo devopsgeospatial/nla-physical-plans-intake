@@ -23,6 +23,8 @@ export interface CommunitySelf {
   username: string;
   fullName?: string;
   orgId?: string;
+  /** org_admin, org_publisher or org_user. */
+  role?: string;
   privileges?: string[];
   groups?: { id: string; title: string }[];
 }
@@ -81,6 +83,7 @@ export async function exchangeCode(config: ArcGisConfig, code: string, codeVerif
     accessExpiresAt: now + res.expires_in * 1000,
     refreshToken: res.refresh_token,
     refreshExpiresAt: now + (res.refresh_token_expires_in ?? config.sessionMinutes * 60) * 1000,
+    reviewer: config.appMode === "review",
   };
 }
 
@@ -93,14 +96,19 @@ export async function getCommunitySelf(config: ArcGisConfig, token: string): Pro
 }
 
 export function assertMayUseApp(config: ArcGisConfig, self: CommunitySelf): void {
-  if (config.allowedGroupId && !self.groups?.some((g) => g.id === config.allowedGroupId)) {
+  if (config.appMode === "review") {
+    const inGroup = !!config.reviewerGroupId && !!self.groups?.some((g) => g.id === config.reviewerGroupId);
+    if (!inGroup && self.role !== "org_admin") {
+      throw new SignInError(`${self.username} is not an NLA plan reviewer. Ask your ArcGIS administrator to add you to the reviewers group.`);
+    }
+  } else if (config.allowedGroupId && !self.groups?.some((g) => g.id === config.allowedGroupId)) {
     throw new SignInError(
       `${self.username} is not a member of the plan submission group. Ask your ArcGIS administrator to add you.`,
     );
   }
   if (self.privileges && !self.privileges.includes("features:user:edit")) {
     throw new SignInError(
-      `${self.username} does not have the "Edit features" privilege (Viewer accounts cannot submit). Ask your administrator for a Contributor, Mobile Worker or Creator user type.`,
+      `${self.username} does not have the "Edit features" privilege (Viewer accounts cannot submit or review). Ask your administrator for a Contributor, Mobile Worker or Creator user type.`,
     );
   }
 }
@@ -128,9 +136,11 @@ export function createUserTokenProvider(
     },
     async getToken() {
       if (!forceRefresh && session.accessExpiresAt - REFRESH_MARGIN_MS > Date.now()) return session.accessToken;
-      // Username/password sign-ins have no refresh token: the session simply ends with the token.
+      // Username/password sign-ins have no refresh token: the session simply ends with the token. While
+      // the token is still valid, a service refusing it is that service's problem (reported as such by
+      // the caller), not an expired sign-in: asking the user to sign in again would not help.
       if (!session.refreshToken) {
-        if (!forceRefresh && session.accessExpiresAt > Date.now()) return session.accessToken;
+        if (session.accessExpiresAt > Date.now()) return session.accessToken;
         throw new SessionExpiredError();
       }
       forceRefresh = false;

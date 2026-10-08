@@ -1,16 +1,17 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { parseUploadFile, UploadValidationError, type ParsedUpload, type UploadFeature } from "@/lib/geo/parse-upload";
 import { findValueErrors, mapFields, type LayerFieldInfo } from "@/lib/plans/attribute-mapping";
 import type { MapSettings } from "@/lib/arcgis/config";
 import { uploadFingerprints, type DuplicateMatch } from "@/lib/plans/duplicates";
-import AppHeader from "./AppHeader";
+import AppHeader, { submissionTabs } from "./AppHeader";
+import { DropZone, FileRow, formatSize } from "./FileInputs";
 
 const UploadPreviewMap = dynamic(() => import("./UploadPreviewMap"), {
   ssr: false,
-  loading: () => <div className="absolute inset-0 bg-[#1a1a1a]" />,
+  loading: () => <div className="absolute inset-0 bg-[#eef2f5]" />,
 });
 
 export interface LayerSummary {
@@ -26,7 +27,15 @@ interface AppendSuccess {
   objectIds: number[];
   attachments: { objectId: number; count: number } | null;
   repairedCount: number;
+  replacedCount: number;
   duplicates: DuplicateMatch[];
+}
+
+/** A submission NLA returned, which this upload revises (its parcels are replaced by the new file). */
+export interface Revision {
+  submittedAt: number;
+  label: string;
+  comments: string[];
 }
 
 interface AppendFailure {
@@ -73,12 +82,14 @@ export default function UploadWorkspace({
   user,
   maxRequestBytes,
   map,
+  revising,
 }: {
   layer: LayerSummary;
   user: { fullName: string; username: string };
   /** Largest submission the server accepts (file + PDFs), so oversize uploads are caught before sending. */
   maxRequestBytes: number;
   map: MapSettings;
+  revising?: Revision;
 }) {
   const [upload, setUpload] = useState<FileState>({ kind: "empty" });
   const [documents, setDocuments] = useState<File[]>([]);
@@ -144,7 +155,7 @@ export default function UploadWorkspace({
       const response = await fetch("/api/plans/duplicates", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items: uploadFingerprints(result.features, result.fieldNames, layer.fields) }),
+        body: JSON.stringify({ items: uploadFingerprints(result.features, result.fieldNames, layer.fields), replaces: revising?.submittedAt }),
       });
       const json = (await response.json().catch(() => null)) as { ok: boolean; duplicates?: DuplicateMatch[] } | null;
       if (!json?.ok || !json.duplicates) throw new Error();
@@ -159,6 +170,7 @@ export default function UploadWorkspace({
     const body = new FormData();
     body.set("file", upload.file, upload.file.name);
     for (const doc of documents) body.append("documents", doc, doc.name);
+    if (revising) body.set("replaces", String(revising.submittedAt));
     setSubmit({ kind: "submitting" });
     try {
       const response = await fetch("/api/plans/submit", { method: "POST", body });
@@ -174,6 +186,11 @@ export default function UploadWorkspace({
   }
 
   function reset() {
+    // A revision is sent once; the next upload is a new submission.
+    if (revising && done) {
+      window.location.assign("/");
+      return;
+    }
     setDupCheck({ kind: "idle" });
     setUpload({ kind: "empty" });
     setDocuments([]);
@@ -192,12 +209,23 @@ export default function UploadWorkspace({
   if (submit.kind === "error") blocking.push({ key: "submit", text: submit.failure.error });
 
   return (
-    <div className="flex h-dvh flex-col bg-night">
-      <AppHeader active="submit" fullName={user.fullName} />
+    <div className="flex h-dvh flex-col bg-white">
+      <AppHeader title="Physical Plan Submission" tabs={submissionTabs("submit")} fullName={user.fullName} />
 
       <div className="flex min-h-0 flex-1 flex-col-reverse lg:flex-row">
         <aside className="relative z-[1000] flex min-h-0 flex-1 flex-col bg-paper lg:w-[360px] lg:flex-none">
           <div className="scroll-slim flex-1 space-y-6 overflow-y-auto p-5">
+            {revising && (
+              <div className="rounded-lg border-l-[3px] border-nla-light bg-nla-tint px-3 py-2.5">
+                <p className="text-[14px] text-ink">Revised plan · {revising.label}</p>
+                {revising.comments.map((c) => (
+                  <p key={c} className="mt-1 text-[13px] leading-5 text-graphite">
+                    NLA: {c}
+                  </p>
+                ))}
+              </div>
+            )}
+
             <Section n={1} title="Plan file">
               {upload.kind === "valid" ? (
                 <FileRow name={upload.file.name} size={upload.file.size} onRemove={done ? undefined : reset} />
@@ -212,7 +240,7 @@ export default function UploadWorkspace({
             </Section>
 
             {parsed && (
-              <div className="fade-in grid grid-cols-2 bg-hub text-white">
+              <div className="fade-in grid grid-cols-2 rounded-xl border border-hairline bg-nla-tint text-ink">
                 <Indicator
                   value={dupCheck.kind === "checking" ? "…" : count.toLocaleString()}
                   label={duplicates.size > 0 ? `parcels (of ${total.toLocaleString()})` : "parcels"}
@@ -261,6 +289,7 @@ export default function UploadWorkspace({
                 <p className="text-[15px] text-ink">
                   {submit.result.objectIds.length.toLocaleString()} parcel{submit.result.objectIds.length === 1 ? "" : "s"} added
                 </p>
+                {submit.result.replacedCount > 0 && <p className="mt-0.5 text-[13px] text-graphite">Sent back to NLA for review</p>}
               </div>
             )}
           </div>
@@ -268,7 +297,7 @@ export default function UploadWorkspace({
           <div className="relative border-t border-hairline p-5">
             {submit.kind === "submitting" && <span className="progress-bar absolute inset-x-0 top-0 h-0.5 overflow-hidden" aria-hidden />}
             {done ? (
-              <button type="button" onClick={reset} className="h-11 w-full border border-nla text-[15px] text-nla transition hover:bg-nla hover:text-white">
+              <button type="button" onClick={reset} className="h-11 w-full rounded-lg border border-nla text-[15px] text-nla transition hover:bg-nla hover:text-white">
                 New upload
               </button>
             ) : (
@@ -276,7 +305,7 @@ export default function UploadWorkspace({
                 type="button"
                 onClick={onSubmit}
                 disabled={!canSubmit}
-                className="h-11 w-full bg-nla text-[15px] text-white transition hover:bg-[#0b6299] disabled:cursor-not-allowed disabled:bg-[#cfcfcf]"
+                className="h-11 w-full rounded-lg bg-nla font-semibold text-[15px] text-white transition hover:bg-[#096a97] disabled:cursor-not-allowed disabled:bg-[#dfe5ea]"
               >
                 {submit.kind === "submitting" ? "Submitting…" : dupCheck.kind === "checking" ? "Checking…" : "Submit"}
               </button>
@@ -315,86 +344,15 @@ function Section({ n, title, children }: { n: number; title: string; children: R
   );
 }
 
-/**
- * Drop target plus an explicit "browse" button that opens a hidden file input. The input lives
- * outside any <label> so clicking can never trigger two dialogs or move focus elsewhere.
- */
-function DropZone(props: { accept: string; multiple?: boolean; onFiles: (files: File[]) => void; label: string; hint: string }) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [over, setOver] = useState(false);
-  const onDrop = (e: DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setOver(false);
-    props.onFiles(Array.from(e.dataTransfer.files));
-  };
-  return (
-    <div
-      onDragOver={(e) => {
-        e.preventDefault();
-        setOver(true);
-      }}
-      onDragLeave={() => setOver(false)}
-      onDrop={onDrop}
-      className={`flex items-center justify-between gap-3 border border-dashed px-4 py-4 transition ${
-        over ? "border-nla bg-nla-tint" : "border-[#bdbdbd] bg-mist"
-      }`}
-    >
-      <span className="min-w-0">
-        <span className="block text-[14px] text-ink">{props.label}</span>
-        <span className="block text-[12px] text-graphite">{props.hint}</span>
-      </span>
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        className="h-8 shrink-0 border border-nla px-3 text-[13px] text-nla transition hover:bg-nla hover:text-white"
-      >
-        Browse
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={props.accept}
-        multiple={props.multiple}
-        hidden
-        onChange={(e) => {
-          props.onFiles(Array.from(e.target.files ?? []));
-          e.target.value = "";
-        }}
-      />
-    </div>
-  );
-}
-
-function FileRow({ name, size, onRemove }: { name: string; size: number; onRemove?: () => void }) {
-  return (
-    <div className="fade-in flex items-center justify-between gap-3 bg-mist px-3 py-2.5">
-      <span className="min-w-0">
-        <span className="block truncate text-[14px] text-ink">{name}</span>
-        <span className="block text-[12px] text-graphite">{formatSize(size)}</span>
-      </span>
-      {onRemove && (
-        <button type="button" onClick={onRemove} aria-label={`Remove ${name}`} className="grid size-7 shrink-0 place-items-center text-[18px] leading-none text-graphite hover:text-alert">
-          ×
-        </button>
-      )}
-    </div>
-  );
-}
-
 function Indicator({ value, label, divider }: { value: string; label: string; divider?: boolean }) {
   return (
-    <div className={`px-5 py-5 ${divider ? "border-l border-white/15" : ""}`}>
+    <div className={`px-5 py-5 ${divider ? "border-l border-hairline" : ""}`}>
       <p className="text-[36px] leading-none tabular-nums">{value}</p>
-      <p className="mt-2 text-[12px] text-white/65">{label}</p>
+      <p className="mt-2 text-[12px] text-graphite">{label}</p>
     </div>
   );
 }
 
 function addUnique(existing: File[], added: File[]): File[] {
   return [...existing, ...added.filter((f) => !existing.some((p) => p.name === f.name && p.size === f.size))];
-}
-
-function formatSize(bytes: number): string {
-  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 }

@@ -1,0 +1,129 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="Architecture" name="Architecture">
+    <mxGraphModel dx="1794" dy="1448" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="900" background="light-dark(#ffffff, #121212)" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=20;fontColor=#193443;fontFamily=Helvetica;" value="&lt;b&gt;Physical Plan Submission&lt;/b&gt; · system architecture" vertex="1">
+          <mxGeometry height="40" width="900" x="30" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="planner" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#193443;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;fontStyle=1;" value="District planner" vertex="1">
+          <mxGeometry height="70" width="40" x="60" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="reviewer" parent="1" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#FFFFFF;strokeColor=#193443;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;fontStyle=1;" value="NLA reviewer" vertex="1">
+          <mxGeometry height="70" width="40" x="1600" y="655" as="geometry" />
+        </mxCell>
+        <mxCell id="browser" parent="1" style="swimlane;startSize=34;html=1;whiteSpace=wrap;fillColor=#193443;fontColor=#FFFFFF;strokeColor=#193443;swimlaneFillColor=#FFFFFF;fontStyle=1;fontSize=13;fontFamily=Helvetica;rounded=0;collapsible=0;" value="Planner&#39;s web browser" vertex="1">
+          <mxGeometry height="590" width="340" x="190" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="b_app" parent="browser" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Physical Plan Submission&lt;/b&gt;&lt;br&gt;Sign in · Submit · My submissions" vertex="1">
+          <mxGeometry height="90" width="300" x="20" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="b_dup" parent="browser" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Duplicate fingerprints&lt;/b&gt;&lt;br&gt;parcel UPI + shape and position" vertex="1">
+          <mxGeometry height="55" width="300" x="20" y="175" as="geometry" />
+        </mxCell>
+        <mxCell id="b_mine" parent="browser" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;My submissions&lt;/b&gt;&lt;br&gt;status · NLA comment · NLA documents" vertex="1">
+          <mxGeometry height="70" width="300" x="20" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="b_read" parent="browser" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Reads and checks the plan file&lt;/b&gt;&lt;br&gt;Shapefile (.prj) or GeoJSON ·&lt;br&gt;geometry · values against the layer&#39;s fields" vertex="1">
+          <mxGeometry height="110" width="300" x="20" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="b_map" parent="browser" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Map&lt;/b&gt; · ArcGIS Maps SDK for JavaScript&lt;br&gt;shows the web map + the parcels" vertex="1">
+          <mxGeometry height="60" width="300" x="20" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="server" parent="1" style="swimlane;startSize=34;html=1;whiteSpace=wrap;fillColor=#193443;fontColor=#FFFFFF;strokeColor=#193443;swimlaneFillColor=#FFFFFF;fontStyle=1;fontSize=13;fontFamily=Helvetica;rounded=0;collapsible=0;" value="App server · Next.js (Node.js)&amp;nbsp;Docker on the NLA server" vertex="1">
+          <mxGeometry height="560" width="360" x="610" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="s_auth" parent="server" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Sign-in&lt;/b&gt;&lt;br&gt;username + password (generateToken)&lt;br&gt;or organization SSO (OAuth 2.0 + PKCE)&lt;br&gt;encrypted session cookie · no database" vertex="1">
+          <mxGeometry height="90" width="320" x="20" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s_dup" parent="server" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Duplicate check&lt;/b&gt;&lt;br&gt;finds parcels already in Physical_Plans" vertex="1">
+          <mxGeometry height="55" width="320" x="20" y="175" as="geometry" />
+        </mxCell>
+        <mxCell id="s_mine" parent="server" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;My submissions&lt;/b&gt;&lt;br&gt;the planner&#39;s own records + attachments ·&lt;br&gt;owner-checked downloads" vertex="1">
+          <mxGeometry height="70" width="320" x="20" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="s_submit" parent="server" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Submit&lt;/b&gt;&lt;br&gt;re-checks the file · skips duplicates ·&lt;br&gt;repairs self-crossings · projects to TM Rwanda ·&lt;br&gt;appends · attaches PDFs · rolls back on failure" vertex="1">
+          <mxGeometry height="110" width="320" x="20" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="s_note" parent="server" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;" value="Every ArcGIS request uses the signed-in planner&#39;s own token, so ArcGIS records who submitted each parcel." vertex="1">
+          <mxGeometry height="50" width="320" x="20" y="485" as="geometry" />
+        </mxCell>
+        <mxCell id="agol" parent="1" style="swimlane;startSize=34;html=1;whiteSpace=wrap;fillColor=#193443;fontColor=#FFFFFF;strokeColor=#193443;swimlaneFillColor=#F7F9FA;fontStyle=1;fontSize=13;fontFamily=Helvetica;rounded=0;collapsible=0;" value="ArcGIS Online · rla.maps.arcgis.com" vertex="1">
+          <mxGeometry height="760" width="470" x="1050" y="90" as="geometry" />
+        </mxCell>
+        <mxCell id="g_portal" parent="agol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EAF3F9;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Portal&lt;/b&gt;&lt;br&gt;sign-in (generateToken · OAuth 2.0)&lt;br&gt;user privileges and groups" vertex="1">
+          <mxGeometry height="90" width="410" x="30" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="g_layer" parent="agol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EAF3F9;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Physical_Plans&lt;/b&gt; feature layer (services7)&lt;br&gt;TM Rwanda / ITRF2005 grid&lt;br&gt;query · applyEdits · addAttachment ·&lt;br&gt;queryAttachments · attachment download&lt;br&gt;&lt;br&gt;NLA response: &lt;b&gt;approval_date&lt;/b&gt; · &lt;b&gt;remarks&lt;/b&gt; · PDFs" vertex="1">
+          <mxGeometry height="225" width="410" x="30" y="165" as="geometry" />
+        </mxCell>
+        <mxCell id="g_geom" parent="agol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EAF3F9;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Geometry service&lt;/b&gt; (utility.arcgisonline.com)&lt;br&gt;simplify = Repair Geometry" vertex="1">
+          <mxGeometry height="60" width="410" x="30" y="405" as="geometry" />
+        </mxCell>
+        <mxCell id="g_webmap" parent="agol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EAF3F9;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Physical Plans Map&lt;/b&gt; (web map)&lt;br&gt;World Imagery + District and Sector boundaries" vertex="1">
+          <mxGeometry height="60" width="410" x="30" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="g_eb" parent="agol" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EAF3F9;strokeColor=#0D73B0;fontColor=#110E0E;fontSize=12;fontFamily=Helvetica;spacing=6;" value="&lt;b&gt;Map Viewer / Experience Builder&lt;/b&gt;&lt;br&gt;where NLA reviewers work" vertex="1">
+          <mxGeometry height="60" width="410" x="30" y="580" as="geometry" />
+        </mxCell>
+        <mxCell id="g_note" parent="agol" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;" value="Planner PDFs are tagged &lt;i&gt;planner-submission&lt;/i&gt;; any other attachment on a planner&#39;s parcels is shown to them as a document from NLA." vertex="1">
+          <mxGeometry height="50" width="410" x="30" y="670" as="geometry" />
+        </mxCell>
+        <mxCell id="eb_label" parent="1" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;" value="sets approval_date · remarks,&lt;br&gt;attaches PDFs" vertex="1">
+          <mxGeometry height="40" width="160" x="1525" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="planner" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="b_app" value="uses">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="b_app" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="s_auth" value="sign in">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="b_dup" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="s_dup" value="fingerprints">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="b_mine" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="s_mine" value="open a submission">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="b_read" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="s_submit" value="plan file + PDFs&lt;br&gt;(HTTPS)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="s_auth" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="g_portal" value="token · user profile">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="s_dup" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.164;" target="g_layer" value="query">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="s_mine" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;entryX=0;entryY=0.556;" target="g_layer" value="query · attachments">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="s_submit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.136;entryX=0;entryY=0.889;" target="g_layer" value="applyEdits · addAttachment">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="s_submit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.773;entryX=0;entryY=0.5;" target="g_geom" value="simplify">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="b_map" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;entryX=0;entryY=0.5;dashed=1;" target="g_webmap" value="loads the web map, its layers and imagery directly">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="360" y="700" />
+              <mxPoint x="1030" y="700" />
+              <mxPoint x="1030" y="620" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="reviewer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="g_eb" value="reviews">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="1" source="g_eb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#4C4C4C;endArrow=block;endFill=1;fontSize=11;fontColor=#4C4C4C;fontFamily=Helvetica;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.25;entryX=1;entryY=0.75;" target="g_layer" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1515" y="685" />
+              <mxPoint x="1515" y="424" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

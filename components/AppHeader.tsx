@@ -1,40 +1,53 @@
 import Link from "next/link";
 
-/** Header for signed-in pages: Rwanda coat of arms, title, the two views, user and sign out. */
-export default function AppHeader({ active, fullName }: { active: "submit" | "submissions"; fullName: string }) {
-  const tab = (href: string, label: string, isActive: boolean) => (
-    <Link
-      href={href}
-      aria-current={isActive ? "page" : undefined}
-      className={`flex h-14 items-center border-b-[3px] px-1 text-[14px] transition ${
-        isActive ? "border-amber text-white" : "border-transparent text-white/65 hover:text-white"
-      }`}
-    >
-      {label}
-    </Link>
-  );
+export interface HeaderTab {
+  href: string;
+  label: string;
+  active: boolean;
+  /** Small count after the label (e.g. submissions waiting for review). */
+  count?: number;
+}
 
+/** Header for signed-in pages: white, as on the public map — NLA logo, app title, views, user and sign out. */
+export default function AppHeader({ title, tabs, fullName }: { title: string; tabs: HeaderTab[]; fullName: string }) {
   return (
-    <header className="relative z-[1001] flex h-14 shrink-0 items-center justify-between gap-4 bg-hub px-4 text-white sm:px-5">
-      <div className="flex min-w-0 items-center gap-6">
-        <div className="flex min-w-0 items-center gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/rwanda-emblem.png" alt="Republic of Rwanda" width={30} height={33} className="h-[33px] w-[30px] shrink-0" />
-          <span className="hidden truncate text-[17px] md:inline">Physical Plan Submission</span>
-        </div>
-        <nav className="flex gap-5">
-          {tab("/", "Submit", active === "submit")}
-          {tab("/submissions", "My submissions", active === "submissions")}
+    <header className="relative z-[1001] flex h-16 shrink-0 items-center justify-between gap-4 border-b border-hairline bg-white px-4 sm:px-5">
+      <div className="flex min-w-0 items-center gap-5">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/nla-logo.png" alt="National Land Authority" width={72} height={36} className="h-[34px] w-auto shrink-0" />
+        <span className="hidden truncate border-l border-hairline pl-5 text-[17px] font-semibold text-ink md:inline">{title}</span>
+        <nav className="flex h-16 gap-5">
+          {tabs.map((tab) => (
+            <Link
+              key={tab.href}
+              href={tab.href}
+              aria-current={tab.active ? "page" : undefined}
+              className={`flex items-center gap-1.5 border-b-2 px-1 text-[14px] font-medium whitespace-nowrap transition ${
+                tab.active ? "border-nla-light text-nla" : "border-transparent text-graphite hover:text-ink"
+              }`}
+            >
+              {tab.label}
+              {tab.count !== undefined && tab.count > 0 && <span className="rounded-full bg-nla-tint px-1.5 text-[11px] leading-[18px] font-semibold text-nla">{tab.count}</span>}
+            </Link>
+          ))}
         </nav>
       </div>
       <div className="flex items-center gap-4">
-        <span className="hidden text-[14px] lg:inline">{fullName}</span>
+        <span className="hidden text-[14px] text-graphite lg:inline">{fullName}</span>
         <form action="/api/auth/logout" method="post">
-          <button type="submit" className="h-8 border border-white/45 px-3.5 text-[13px] transition hover:bg-white/10">
+          <button type="submit" className="h-9 rounded-full border border-[#dfe5ea] px-4 text-[13px] font-medium text-ink transition hover:border-nla-light hover:text-nla">
             Sign out
           </button>
         </form>
       </div>
     </header>
   );
+}
+
+/** The submission app's two views. */
+export function submissionTabs(active: "submit" | "submissions"): HeaderTab[] {
+  return [
+    { href: "/", label: "Submit", active: active === "submit" },
+    { href: "/submissions", label: "My submissions", active: active === "submissions" },
+  ];
 }

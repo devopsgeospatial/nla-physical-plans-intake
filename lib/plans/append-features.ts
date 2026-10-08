@@ -15,6 +15,7 @@ import {
   type EsriSpatialReference,
 } from "../geo/esri-geometry";
 import type { ParsedUpload, UploadFeature } from "../geo/parse-upload";
+import { repairSelfIntersections } from "../geo/repair";
 import {
   AREA_FIELD,
   AUTO_FIELDS,
@@ -27,11 +28,15 @@ import {
 } from "./attribute-mapping";
 import { findDuplicates, uploadFingerprints, type DuplicateMatch } from "./duplicates";
 import { loadExistingParcels } from "./existing-parcels";
+import { REVIEWER_ATTACHMENT_KEYWORD } from "./review-status";
+import { loadSubmission, type SubmissionDocument } from "./submissions";
 
 export interface AppendRequest {
   upload: ParsedUpload;
   documents: { file: Blob; fileName: string }[];
   username: string;
+  /** submittedAt of one of the planner's submissions NLA returned: the upload is its revised plan. */
+  replaces?: number;
 }
 
 export interface AppendResult {
@@ -42,6 +47,8 @@ export interface AppendResult {
   attachments: { objectId: number; count: number } | null;
   /** Polygons that were self-intersecting and repaired with ArcGIS Simplify before appending. */
   repairedCount: number;
+  /** Parcels of the returned submission that the revised plan replaced (deleted). */
+  replacedCount: number;
   /** Polygons skipped because they are already in the layer or repeat an earlier polygon in the file. */
   duplicates: DuplicateMatch[];
   matchedFields: { file: string; layer: string }[];
@@ -88,6 +95,34 @@ export class PartialSubmissionError extends Error {
   }
 }
 
+/** The submission named as being revised is not the planner's, or NLA has not returned it. */
+export class RevisionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RevisionError";
+  }
+}
+
+/**
+ * The parcels a revised plan replaces: every parcel of the returned submission that is not approved.
+ * Approved parcels stay as they are (in the revised file they are skipped as duplicates).
+ */
+export async function loadReplaceable(
+  layer: FeatureLayerClient,
+  meta: LayerMetadata,
+  username: string,
+  submittedAt: number,
+): Promise<{ objectIds: number[]; nlaDocuments: SubmissionDocument[] }> {
+  const submission = await loadSubmission(layer, meta, username, submittedAt);
+  if (!submission) throw new RevisionError("The submission you are revising no longer exists. Submit the plan as a new upload.");
+  if (!submission.parcels.some((p) => p.status === "returned")) {
+    throw new RevisionError("NLA has not returned this submission, so it cannot be replaced.");
+  }
+  const objectIds = submission.parcels.filter((p) => p.status !== "approved").map((p) => p.objectId);
+  const ids = new Set(objectIds);
+  return { objectIds, nlaDocuments: submission.nlaDocuments.filter((d) => ids.has(d.objectId)) };
+}
+
 const BATCH_SIZE = 200;
 const ATTACHMENT_CONCURRENCY = 4;
 
@@ -109,9 +144,14 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
 
   const layerSr = await layer.getSpatialReference();
 
+  // A revised plan replaces the returned parcels, so they don't count as duplicates of it.
+  const replaced = request.replaces !== undefined ? await loadReplaceable(layer, meta, request.username, request.replaces) : null;
+  const replacedIds = new Set(replaced?.objectIds ?? []);
+
   // Duplicates are never appended: skip polygons already in the layer or repeated in the file.
   const fingerprints = uploadFingerprints(request.upload.features, request.upload.fieldNames, meta.fields);
-  const duplicates = findDuplicates(fingerprints, await loadExistingParcels(layer, meta, fingerprints));
+  const existing = (await loadExistingParcels(layer, meta, fingerprints)).filter((p) => !replacedIds.has(p.objectId));
+  const duplicates = findDuplicates(fingerprints, existing);
   const skip = new Set(duplicates.map((d) => d.index));
   if (skip.size === request.upload.features.length) {
     throw new NothingToAppendError(
@@ -130,14 +170,21 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
 
   const toRepair = features.flatMap((f, i) => (f.selfIntersection ? [i] : []));
   if (toRepair.length > 0) {
-    const serviceUrl = await resolveGeometryServiceUrl(config.portalUrl, config.geometryServiceUrl, tokens);
-    const repaired = await simplifyPolygons(serviceUrl, toRepair.map((i) => geometries[i]!), layerSr, tokens);
-    toRepair.forEach((featureIndex, k) => {
-      if (repaired[k]!.rings.length === 0) {
+    let repaired: EsriPolygon[] | null = null;
+    try {
+      const serviceUrl = await resolveGeometryServiceUrl(config.portalUrl, config.geometryServiceUrl, tokens);
+      repaired = await simplifyPolygons(serviceUrl, toRepair.map((i) => geometries[i]!), layerSr, tokens);
+    } catch (err) {
+      // The ArcGIS geometry service is a convenience, not a requirement: repair here instead.
+      console.warn(`[append] geometry service unavailable (${err instanceof Error ? err.message : String(err)}); repairing ${toRepair.length} polygon(s) locally`);
+    }
+    for (const [k, featureIndex] of toRepair.entries()) {
+      const geometry = repaired ? repaired[k]! : await toLayerGeometry(repairLocally(features[featureIndex]!), layerSr, config, tokens);
+      if (geometry.rings.length === 0) {
         throw new AttributeError(`Feature ${kept[featureIndex]!.index + 1} has no area left after repairing its self-intersections. Fix it in the source data.`);
       }
-      geometries[featureIndex] = repaired[k]!;
-    });
+      geometries[featureIndex] = geometry;
+    }
   }
 
   const now = Date.now();
@@ -171,6 +218,16 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
     // Tagged so the "My submissions" view can tell the planner's own PDFs from documents NLA attaches later.
     const jobs = request.documents.map((doc) => () => layer.addAttachment(firstObjectId, doc.file, doc.fileName, PLANNER_ATTACHMENT_KEYWORD));
     await runWithConcurrency(jobs, ATTACHMENT_CONCURRENCY);
+
+    if (replaced) {
+      // NLA's documents on the returned parcels stay available to the planner: copy them onto the revision.
+      for (const doc of replaced.nlaDocuments) {
+        const file = await (await layer.downloadAttachment(doc.objectId, doc.attachmentId)).blob();
+        await layer.addAttachment(firstObjectId, file, doc.name, REVIEWER_ATTACHMENT_KEYWORD);
+      }
+      // Last step, so any earlier failure rolls back the new parcels and leaves the returned ones untouched.
+      await layer.deleteFeatures(replaced.objectIds);
+    }
   } catch (err) {
     if (objectIds.length === 0) throw err;
     let rolledBack = false;
@@ -196,6 +253,7 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
     objectIds,
     attachments: request.documents.length > 0 ? { objectId: objectIds[0]!, count: request.documents.length } : null,
     repairedCount: toRepair.length,
+    replacedCount: replaced?.objectIds.length ?? 0,
     duplicates,
     matchedFields: mapping.matched.map((m) => ({ file: m.fileField, layer: m.layerField.name })),
     ignoredFields: mapping.ignored,
@@ -240,6 +298,11 @@ async function toLayerGeometry(
   const serviceUrl = await resolveGeometryServiceUrl(config.portalUrl, config.geometryServiceUrl, tokens);
   const outSR = wkidOf(layerSr) !== undefined ? { wkid: wkidOf(layerSr) } : layerSr;
   return projectPolygon(serviceUrl, wgs84, outSR, tokens);
+}
+
+/** The feature with its self-intersections repaired locally (no geometry service). */
+function repairLocally(feature: UploadFeature): UploadFeature {
+  return { ...feature, geometry: repairSelfIntersections(feature.geometry) };
 }
 
 /**

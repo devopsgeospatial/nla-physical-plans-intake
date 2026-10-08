@@ -2,13 +2,16 @@
  * DEV ONLY: `npm run dev:local` starts the local ArcGIS emulator and `next dev` pointed at it.
  * Real environment values from .env.local are overridden for this process only (process env
  * takes precedence over .env files in Next.js), so nothing about the real setup changes.
+ *
+ * `npm run dev:local -- review` starts the review app instead (sign in as reviewer.nla / rla-test).
  */
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { EMULATOR_GROUP_ID, EMULATOR_LAYER_URL, EMULATOR_PORT, EMULATOR_PORTAL_URL, startEmulator } from "./arcgis-emulator";
+import { EMULATOR_GROUP_ID, EMULATOR_REVIEWER_GROUP_ID, EMULATOR_LAYER_URL, EMULATOR_PORT, EMULATOR_PORTAL_URL, startEmulator } from "./arcgis-emulator";
 
 const APP_PORT = Number(process.env.PORT ?? 3000);
 const APP_URL = `http://localhost:${APP_PORT}`;
+const REVIEW = process.argv.includes("review");
 
 async function main() {
   const emulator = await startEmulator().catch((err: NodeJS.ErrnoException) => {
@@ -28,6 +31,8 @@ async function main() {
       ARCGIS_OAUTH_CLIENT_ID: "local-emulator",
       ARCGIS_OAUTH_REDIRECT_URI: `${APP_URL}/api/auth/callback`,
       ARCGIS_ALLOWED_GROUP_ID: EMULATOR_GROUP_ID,
+      ARCGIS_REVIEWER_GROUP_ID: EMULATOR_REVIEWER_GROUP_ID,
+      APP_MODE: REVIEW ? "review" : "submission",
       APP_URL,
       SESSION_SECRET: "local-emulator-session-secret-not-for-production",
     },
@@ -36,9 +41,9 @@ async function main() {
   console.log(`
   ┌───────────────────────────────────────────────────────────────┐
   │  LOCAL TEST MODE (ArcGIS emulator, nothing reaches ArcGIS)      │
-  │  Intake app:         ${APP_URL.padEnd(41)}│
+  │  ${(REVIEW ? "Review app:" : "Intake app:").padEnd(20)}${APP_URL.padEnd(41)}│
   │  Emulator / records: ${`http://localhost:${EMULATOR_PORT}/`.padEnd(41)}│
-  │  Test sign-in:       ${"planner.muhanga / rla-test".padEnd(41)}│
+  │  Test sign-in:       ${(REVIEW ? "reviewer.nla / rla-test" : "planner.muhanga / rla-test").padEnd(41)}│
   └───────────────────────────────────────────────────────────────┘
 `);
 

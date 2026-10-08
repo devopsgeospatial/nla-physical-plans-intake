@@ -34,7 +34,7 @@ export const NLA_RESPONSE_FIELDS = {
 } as const;
 
 /** Keyword on attachments a planner uploaded; any other attachment on their parcels came from NLA. */
-export const PLANNER_ATTACHMENT_KEYWORD = "planner-submission";
+export { PLANNER_ATTACHMENT_KEYWORD } from "./review-status";
 
 /** Filled from the polygon (in the layer's grid) when the file does not provide a value. */
 export const AREA_FIELD = "area_sqm";
