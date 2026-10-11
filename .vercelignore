@@ -1,0 +1,11 @@
+# Never uploaded to Vercel: local settings and secrets, and files the apps do not need.
+.env
+.env.local
+.env.*.local
+node_modules
+.next
+*.html
+*.drawio
+tests
+samples
+Logo

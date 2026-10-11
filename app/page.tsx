@@ -5,7 +5,7 @@ import SsoLink from "@/components/SsoLink";
 import { resolveField } from "@/lib/plans/attribute-mapping";
 import { liveDistrictSlugs } from "@/lib/public/availability";
 import { resolvePublicConfig } from "@/lib/public/resolve";
-import { DISTRICTS } from "@/lib/public/districts";
+import { DISTRICTS, hasCadastre } from "@/lib/public/districts";
 import ReviewWorkspace, { type ReviewView } from "@/components/ReviewWorkspace";
 import { formatDateTime } from "@/components/StatusTag";
 import UploadWorkspace, { type LayerSummary, type Revision } from "@/components/UploadWorkspace";
@@ -25,7 +25,13 @@ type SearchParams = { auth_error?: string; u?: string; revise?: string; view?: s
 export default async function Page({ searchParams }: { searchParams: Promise<SearchParams> }) {
   if (getAppMode() === "home") {
     // Districts open as soon as NLA approves a plan in them (checked against the live layer).
-    const live = await liveDistrictSlugs(await resolvePublicConfig(getPublicConfig()));
+    // If ArcGIS cannot be read, the page still shows: districts with a connected parcel register stay open.
+    const live = await resolvePublicConfig(getPublicConfig())
+      .then(liveDistrictSlugs)
+      .catch((err) => {
+        console.error("[home] could not read the approved plans", err);
+        return new Set(DISTRICTS.filter(hasCadastre).map((d) => d.slug));
+      });
     const districts = DISTRICTS.map((d) => ({ slug: d.slug, name: d.name, province: d.province, live: live.has(d.slug) }));
     return <Landing {...getAppLinks()} districts={districts} />;
   }
