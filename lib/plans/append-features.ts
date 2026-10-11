@@ -20,6 +20,7 @@ import {
   AREA_FIELD,
   AUTO_FIELDS,
   coerceValue,
+  fieldName,
   mapFields,
   PLANNER_ATTACHMENT_KEYWORD,
   writableFields,
@@ -139,8 +140,11 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
 
   const mapping = mapFields(request.upload.fieldNames, meta.fields);
   const writable = writableFields(meta.fields);
-  const has = (name: string) => writable.some((f) => f.name.toLowerCase() === name);
-  const areaField = has(AREA_FIELD) && !mapping.matched.some((m) => m.layerField.name.toLowerCase() === AREA_FIELD) ? AREA_FIELD : null;
+  const writableName = (name: string) => fieldName(writable, name);
+  const areaName = writableName(AREA_FIELD);
+  const areaField = areaName && !mapping.matched.some((m) => m.layerField.name === areaName) ? areaName : null;
+  const createdUserField = writableName(AUTO_FIELDS.createdUser);
+  const createdDateField = writableName(AUTO_FIELDS.createdDate);
 
   const layerSr = await layer.getSpatialReference();
 
@@ -193,8 +197,8 @@ export async function appendFeatures(request: AppendRequest, tokens: TokenProvid
     const geometry = geometries[index]!;
     const attributes = attributeSets[index]!;
     if (areaField) attributes[areaField] = round2(storedArea(feature, geometry, layerSr));
-    if (has(AUTO_FIELDS.createdUser)) attributes[AUTO_FIELDS.createdUser] = request.username;
-    if (has(AUTO_FIELDS.createdDate)) attributes[AUTO_FIELDS.createdDate] = now;
+    if (createdUserField) attributes[createdUserField] = request.username;
+    if (createdDateField) attributes[createdDateField] = now;
     adds.push({ geometry, attributes });
   }
 

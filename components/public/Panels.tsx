@@ -520,7 +520,7 @@ function DocLink({
 
 /** Not published: owners' parcel UPIs and internal bookkeeping fields. */
 const PRIVATE_FIELDS =
-  /^(parcel_upi|upi|created_user|created_date|last_edited_user|last_edited_date|globalid|shape__area|shape__length)$/i;
+  /^(parcel_upi|upi|created_user|created_us|created_date|created_da|last_edited_user|last_edite|last_edited_date|last_edi_1|creator|creationdate|editor|editdate|globalid|shape__area|shape__length|shape_leng)$/i;
 
 export function Download({
   plans,

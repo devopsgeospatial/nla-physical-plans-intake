@@ -63,7 +63,31 @@ export function projectWgs84PolygonLocally(polygon: EsriPolygon, target: EsriSpa
       spatialReference: { wkid: 102100, latestWkid: 3857 },
     };
   }
+  const utm = utmDefinition(wkidOf(target));
+  if (utm) {
+    const converter = proj4("EPSG:4326", utm);
+    const rings = polygon.rings.map((ring) =>
+      ring.map(([lon, lat]) => {
+        const [x, y] = converter.forward([lon, lat]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`Could not project ${lon}, ${lat} to UTM.`);
+        return [x, y] as [number, number];
+      }),
+    );
+    return { rings, spatialReference: { wkid: wkidOf(target)! } };
+  }
   return null;
+}
+
+/**
+ * proj4 definition of a WGS 84 / UTM zone: EPSG 32601–32660 (north) and 32701–32760 (south). Rwanda
+ * lies in zones 35S and 36S (32735, 32736).
+ */
+export function utmDefinition(wkid: number | undefined): string | null {
+  if (wkid === undefined) return null;
+  const north = wkid >= 32601 && wkid <= 32660;
+  const south = wkid >= 32701 && wkid <= 32760;
+  if (!north && !south) return null;
+  return `+proj=utm +zone=${wkid % 100}${south ? " +south" : ""} +datum=WGS84 +units=m +no_defs`;
 }
 
 /**

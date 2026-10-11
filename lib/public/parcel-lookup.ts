@@ -5,7 +5,7 @@ import { feature, featureCollection } from "@turf/helpers";
 import intersect from "@turf/intersect";
 import type { MultiPolygon, Polygon } from "geojson";
 import type { TokenProvider } from "../arcgis/auth";
-import type { PublicConfig } from "../arcgis/config";
+import type { ResolvedPublicConfig as PublicConfig } from "./resolve";
 import { FeatureLayerClient, type QueryFeature } from "../arcgis/feature-layer";
 import { esriRingsToGeoJson, geoJsonToEsriPolygon } from "../geo/esri-geometry";
 import type { District } from "./districts";
@@ -57,7 +57,7 @@ export async function lookupByUpi(config: PublicConfig, district: District, upi:
   const value = `'${upi.replace(/'/g, "''")}'`;
   const found = district.parcelsLayerUrl
     ? await cadastre(config, district).queryAll({ where: `${district.upiField ?? "upi"} = ${value}`, outFields: "*", returnGeometry: true, outSR: 4326 })
-    : await plansLayer(config).queryAll({ where: `(${config.planFilter}) AND UPPER(parcel_upi) = ${value.toUpperCase()}`, outFields: "*", returnGeometry: true, outSR: 4326 });
+    : await plansLayer(config).queryAll({ where: `(${config.planFilter}) AND UPPER(${config.fields.upi}) = ${value.toUpperCase()}`, outFields: "*", returnGeometry: true, outSR: 4326 });
   return found[0] ? report(config, district, found[0], true) : null;
 }
 
@@ -104,7 +104,7 @@ async function report(config: PublicConfig, district: District, parcel: QueryFea
     geometryType: "esriGeometryPolygon",
     inSR: 4326,
     spatialRel: "esriSpatialRelIntersects",
-    outFields: "zoning,zone_code,gen_lu,approval_date",
+    outFields: [config.fields.zoning, config.fields.zoneCode, config.fields.landUse, config.fields.approvalDate].join(","),
     returnGeometry: true,
     outSR: 4326,
   });
@@ -117,15 +117,15 @@ async function report(config: PublicConfig, district: District, parcel: QueryFea
     const share = overlap && parcelArea > 0 ? (turfArea(overlap) / parcelArea) * 100 : 0;
     if (share <= 0) continue;
     const z = attributesLowercase(zone.attributes);
-    const zoning = text(z.zoning);
-    const zoneCode = text(z.zone_code);
+    const zoning = text(z[config.fields.zoning.toLowerCase()]);
+    const zoneCode = text(z[config.fields.zoneCode.toLowerCase()]);
     const key = `${zoneCode}|${zoning}`;
-    const approvedAt = typeof z.approval_date === "number" ? z.approval_date : null;
+    const approvedAt = typeof z[config.fields.approvalDate.toLowerCase()] === "number" ? (z[config.fields.approvalDate.toLowerCase()] as number) : null;
     const prev = byKind.get(key);
     byKind.set(key, {
       zoning,
       zoneCode,
-      landUse: text(z.gen_lu),
+      landUse: text(z[config.fields.landUse.toLowerCase()]),
       sharePct: (prev?.sharePct ?? 0) + share,
       approvedAt: Math.max(prev?.approvedAt ?? 0, approvedAt ?? 0) || null,
     });
@@ -135,12 +135,12 @@ async function report(config: PublicConfig, district: District, parcel: QueryFea
   const sites = await sitesAt(config, geoJsonToEsriPolygon(geometry)).catch(() => []);
 
   return {
-    upi: revealUpi ? (text(a[(district.upiField ?? "upi").toLowerCase()]) ?? text(a.parcel_upi)) : null,
+    upi: revealUpi ? (text(a[(district.upiField ?? "upi").toLowerCase()]) ?? text(a[config.fields.upi.toLowerCase()])) : null,
     village: text(a.village),
-    cell: text(a.cell) ?? text(a.cell_1),
+    cell: text(a.cell) ?? text(a[config.fields.cell.toLowerCase()]),
     sector: text(a.sector) ?? text(a.sector_1),
     district: text(a.district) ?? district.name,
-    areaSqm: typeof a.size === "number" ? a.size : typeof a.area_sqm === "number" ? a.area_sqm : parcelArea,
+    areaSqm: typeof a.size === "number" ? a.size : typeof a[config.fields.area.toLowerCase()] === "number" ? (a[config.fields.area.toLowerCase()] as number) : parcelArea,
     geometry,
     coverage: coveredPct >= WITHIN_PCT ? "within" : coveredPct >= MIN_ZONE_PCT ? "partly" : "outside",
     coveredPct: Math.round(coveredPct * 10) / 10,

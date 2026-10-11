@@ -63,23 +63,42 @@ export interface FieldMapping {
   automatic: string[];
 }
 
+/**
+ * The layer's actual field for a logical name, which may have been cut to 10 characters when the
+ * layer was published from a shapefile: "approval_date" finds "approval_date" or "approval_d".
+ */
+export function resolveField<F extends { name: string }>(fields: readonly F[], name: string): F | undefined {
+  const key = name.toLowerCase();
+  return fields.find((f) => f.name.toLowerCase() === key) ?? fields.find((f) => f.name.toLowerCase() === key.slice(0, DBF_NAME_LENGTH));
+}
+
+export function fieldName(fields: readonly { name: string }[], name: string): string | undefined {
+  return resolveField(fields, name)?.name;
+}
+
 export function writableFields(fields: LayerFieldInfo[]): LayerFieldInfo[] {
   return fields.filter((f) => f.editable !== false && !NOT_WRITABLE_TYPES.has(f.type));
 }
 
 export function mapFields(fileFields: string[], layerFields: LayerFieldInfo[]): FieldMapping {
   const writable = writableFields(layerFields);
-  const autoNames = new Set<string>([...Object.values(AUTO_FIELDS), ...Object.values(NLA_RESPONSE_FIELDS)]);
+  // Reserved fields by their actual names on this layer (full or shapefile-truncated).
+  const autoNames = new Set<string>(
+    [...Object.values(AUTO_FIELDS), ...Object.values(NLA_RESPONSE_FIELDS)].map((n) => (fieldName(layerFields, n) ?? n).toLowerCase()),
+  );
   const mapping: FieldMapping = { matched: [], ignored: [], automatic: [] };
   const used = new Set<string>();
 
   for (const fileField of fileFields) {
     const key = fileField.toLowerCase();
     let target = writable.find((f) => f.name.toLowerCase() === key);
+    // A truncated file field (planning_s) finds the full layer field, and a full file field
+    // (planning_status) finds a layer field truncated by shapefile publishing (planning_s).
     if (!target && key.length === DBF_NAME_LENGTH) {
       const candidates = writable.filter((f) => f.name.toLowerCase().startsWith(key));
       if (candidates.length === 1) target = candidates[0];
     }
+    if (!target && key.length > DBF_NAME_LENGTH) target = writable.find((f) => f.name.toLowerCase() === key.slice(0, DBF_NAME_LENGTH));
     if (target && autoNames.has(target.name.toLowerCase())) {
       mapping.automatic.push(fileField);
     } else if (target && !used.has(target.name)) {

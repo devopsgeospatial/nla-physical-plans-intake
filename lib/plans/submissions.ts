@@ -1,7 +1,7 @@
 import "server-only";
 
-import type { FeatureLayerClient, LayerMetadata } from "../arcgis/feature-layer";
-import { AUTO_FIELDS, NLA_RESPONSE_FIELDS } from "./attribute-mapping";
+import type { AttachmentInfo, FeatureLayerClient, LayerMetadata } from "../arcgis/feature-layer";
+import { AUTO_FIELDS, fieldName, NLA_RESPONSE_FIELDS } from "./attribute-mapping";
 import { isPlannerAttachment, parcelStatus, submissionStatus, type ParcelStatus, type SubmissionStatus } from "./review-status";
 
 /**
@@ -55,7 +55,7 @@ export function sqlString(value: string): string {
 
 /** Actual field names on the layer (names differ in case between layers). */
 export function submissionFields(meta: LayerMetadata) {
-  const field = (name: string) => meta.fields.find((f) => f.name.toLowerCase() === name)?.name;
+  const field = (name: string) => fieldName(meta.fields, name);
   return {
     objectId: meta.objectIdField,
     createdUser: field(AUTO_FIELDS.createdUser),
@@ -79,9 +79,10 @@ export async function loadSubmissions(
   const { createdUser, createdDate } = f;
   if (!createdUser || !createdDate) return [];
 
+  const where = options.planner ? `${createdUser} = ${sqlString(options.planner)}` : "1=1";
   const rows: ParcelRow[] = (
     await layer.queryAll({
-      where: options.planner ? `${createdUser} = ${sqlString(options.planner)}` : "1=1",
+      where,
       outFields: [f.objectId, createdUser, createdDate, f.approvalDate, f.remarks, f.district].filter(Boolean).join(","),
       returnGeometry: false,
       orderByFields: `${createdDate} DESC`,
@@ -97,7 +98,9 @@ export async function loadSubmissions(
     }))
     .filter((r) => r.planner && r.createdAt > 0 && r.createdAt >= (options.since ?? 0));
 
-  const attachments = rows.length > 0 ? await layer.queryAttachments(rows.map((r) => r.objectId)) : new Map();
+  // One request for the attachments of all these records (the same condition as the query above).
+  const attachments =
+    rows.length > 0 ? await layer.queryAttachmentsWhere(where, () => rows.map((r) => r.objectId)) : new Map<number, AttachmentInfo[]>();
 
   const groups = new Map<string, ParcelRow[]>();
   for (const row of rows) {

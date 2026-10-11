@@ -4,6 +4,7 @@ import { FeatureLayerClient } from "@/lib/arcgis/feature-layer";
 import { createUserTokenProvider } from "@/lib/auth/oauth";
 import { readSession, SESSION_COOKIE } from "@/lib/auth/session";
 import { esriRingsToGeoJson } from "@/lib/geo/esri-geometry";
+import { fieldName } from "@/lib/plans/attribute-mapping";
 import { ownerFilter } from "@/lib/plans/submissions";
 
 export const runtime = "nodejs";
@@ -16,7 +17,7 @@ const POPUP_FIELDS = ["plan_id", "parcel_upi", "gen_lu", "zone_code", "zoning", 
 function popupProperties(attributes: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const name of POPUP_FIELDS) {
-    const key = Object.keys(attributes).find((k) => k.toLowerCase() === name);
+    const key = fieldName(Object.keys(attributes).map((k) => ({ name: k })), name);
     if (!key) continue;
     const value = attributes[key];
     // Dates arrive as epoch milliseconds; show the calendar day.

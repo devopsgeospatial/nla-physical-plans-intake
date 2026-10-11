@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import PublicApp from "@/components/public/PublicApp";
 import { getAppLinks, getAppMode, getPublicConfig } from "@/lib/arcgis/config";
 import { liveDistrictSlugs } from "@/lib/public/availability";
+import { resolvePublicConfig } from "@/lib/public/resolve";
 import { DISTRICTS, findDistrict, NATIONAL_DOCUMENTS } from "@/lib/public/districts";
 import { districtBoundary } from "@/lib/public/geo-index";
 
@@ -13,7 +14,8 @@ type Params = Promise<{ district: string }>;
 /** The district, if the public app serves it: it has approved plans (or a connected cadastre). */
 async function available(slug: string) {
   if (getAppMode() !== "public") return null;
-  const config = getPublicConfig();
+  const config = await resolvePublicConfig(getPublicConfig()).catch(() => null);
+  if (!config) return null;
   const district = findDistrict(slug);
   if (!district || (config.lockedDistrict && config.lockedDistrict !== district.slug)) return null;
   const live = await liveDistrictSlugs(config);
@@ -39,6 +41,7 @@ export default async function DistrictPage({ params }: { params: Params }) {
       map={{ portalUrl: config.portalUrl, webMapId: district.webMapId ?? config.webMapId }}
       planLayerUrl={config.planLayerUrl}
       baseFilter={config.planFilter}
+      fields={config.fields}
       boundary={boundary.esri}
       sitesLayerUrls={config.sitesLayerUrls}
       references={[...(district.reports ?? []), ...NATIONAL_DOCUMENTS]}

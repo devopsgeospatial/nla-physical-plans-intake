@@ -47,7 +47,7 @@ export function getAppMode(): AppMode {
 
 export interface PublicConfig {
   portalUrl: string;
-  /** The Physical_Plans layer. */
+  /** The plans layer the public reads: PUBLIC_PLAN_LAYER_URL (a read-only view), else the Rwanda_Physical_Plans layer. */
   planLayerUrl: string;
   /** Plans the public may see. Applied on the server and to the map, whatever the web map's own filter. */
   planFilter: string;
@@ -70,10 +70,10 @@ export interface PublicConfig {
 export function getPublicConfig(): PublicConfig {
   return {
     portalUrl: trimSlash(process.env.ARCGIS_PORTAL_URL || "https://rla.maps.arcgis.com"),
-    planLayerUrl: trimSlash(
-      process.env.ARCGIS_FEATURE_LAYER_URL || "https://services7.arcgis.com/htgaiKX6RV2DDGgK/arcgis/rest/services/Physical_Plans/FeatureServer/0",
-    ),
-    planFilter: process.env.PUBLIC_PLAN_FILTER || "approval_date IS NOT NULL",
+    // A public read-only view of the plans layer when there is one; the editable layer otherwise.
+    planLayerUrl: trimSlash(process.env.PUBLIC_PLAN_LAYER_URL || process.env.ARCGIS_FEATURE_LAYER_URL || "https://services7.arcgis.com/htgaiKX6RV2DDGgK/arcgis/rest/services/Rwanda_Physical_Plans/FeatureServer/0"),
+    // "{approval_date}" is replaced by the layer's actual field name (see resolvePublicConfig).
+    planFilter: process.env.PUBLIC_PLAN_FILTER || "{approval_date} IS NOT NULL",
     webMapId: process.env.PUBLIC_WEBMAP_ID || "83361399512f417580bd31a1d855be89",
     lockedDistrict: process.env.PUBLIC_DISTRICT?.toLowerCase() || undefined,
     apiKey: process.env.ARCGIS_API_KEY || undefined,

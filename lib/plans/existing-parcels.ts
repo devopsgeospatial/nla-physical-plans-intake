@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { FeatureLayerClient, LayerMetadata } from "../arcgis/feature-layer";
+import { fieldName } from "./attribute-mapping";
 import { fingerprintEsriRings, normalizeUpi, UPI_FIELD, type ExistingParcel, type Fingerprint } from "./duplicates";
 
 const UPI_CHUNK = 100;
@@ -13,7 +14,7 @@ const BBOX_MARGIN_DEG = 0.001;
  */
 export async function loadExistingParcels(layer: FeatureLayerClient, meta: LayerMetadata, uploads: Fingerprint[]): Promise<ExistingParcel[]> {
   if (uploads.length === 0) return [];
-  const upiField = meta.fields.find((f) => f.name.toLowerCase() === UPI_FIELD)?.name;
+  const upiField = fieldName(meta.fields, UPI_FIELD);
   const outFields = [meta.objectIdField, upiField].filter(Boolean).join(",");
   const common = { outFields, returnGeometry: true, outSR: 4326 };
 

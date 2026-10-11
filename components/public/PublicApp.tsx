@@ -8,6 +8,7 @@ import type { MapSettings } from "@/lib/arcgis/config";
 import type { ReferenceDocument } from "@/lib/public/districts";
 import type { ParcelReport } from "@/lib/public/parcel-lookup";
 import type { EsriPolygon } from "@/lib/geo/esri-geometry";
+import type { PlanFields } from "@/lib/public/resolve";
 import ParcelResult from "./ParcelResult";
 import type { MapHandles, Site } from "./PlansMap";
 import { Basemaps, Documents, Download, Explore, Insights, Layers, Legend, selectSites, type DistrictTotals, type Selection, type ZoneSwatch } from "./Panels";
@@ -38,6 +39,7 @@ export default function PublicApp({
   map,
   planLayerUrl,
   baseFilter,
+  fields,
   boundary,
   sitesLayerUrls,
   references,
@@ -48,6 +50,8 @@ export default function PublicApp({
   map: MapSettings;
   planLayerUrl: string;
   baseFilter: string;
+  /** The plans layer's field names (full or shapefile-truncated). */
+  fields: PlanFields;
   /** The district's boundary (WGS84 ArcGIS JSON): what "in this district" means for every query. */
   boundary: EsriPolygon;
   sitesLayerUrls: string[];
@@ -144,25 +148,31 @@ export default function PublicApp({
         if (fallback?.color) swatches.push({ value: "__default", label: renderer.defaultLabel || "Other approved plans", color: fallback.color.toCss(false) });
         setZoning(swatches);
       }
-      // Approved parcels lying in the district (by location: planners often leave the district field empty).
-      h.plans
-        .queryFeatures({
-          where: baseFilter,
-          geometry: h.district,
-          spatialRelationship: "intersects",
-          outStatistics: [
-            { statisticType: "count", onStatisticField: h.plans.objectIdField, outStatisticFieldName: "n" },
-            { statisticType: "sum", onStatisticField: "area_sqm", outStatisticFieldName: "a" },
-          ],
-        })
-        .then((r) => setTotals({ parcels: Number(r.features[0]?.attributes.n ?? 0), hectares: Number(r.features[0]?.attributes.a ?? 0) / 10_000 }))
-        .catch((err) => {
-          console.warn("[insights]", err);
-          setTotals({ parcels: 0, hectares: 0 });
-        });
     },
-    [baseFilter],
+    [],
   );
+
+  // ---- the district's figures and sites: one request, computed and cached on the server -----------
+  const [planExtent, setPlanExtent] = useState<[number, number, number, number] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/public/summary?district=${district.slug}`)
+      .then((r) => r.json())
+      .then((json: { ok: boolean; totals?: DistrictTotals; sites?: Site[]; planExtent?: [number, number, number, number] | null }) => {
+        if (cancelled) return;
+        setTotals(json.ok && json.totals ? json.totals : { parcels: 0, hectares: 0 });
+        setSites(json.ok && json.sites ? json.sites : []);
+        setPlanExtent(json.ok ? (json.planExtent ?? null) : null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTotals({ parcels: 0, hectares: 0 });
+        setSites([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [district.slug]);
 
   // ---- the sites chosen in Explore (by status, stage or name): the map shows and frames only them --
   const selectedSites = useMemo(() => (sites ? selectSites(sites, selection) : null), [sites, selection]);
@@ -289,6 +299,8 @@ export default function PublicApp({
             map={map}
             planLayerUrl={planLayerUrl}
             baseFilter={baseFilter}
+            sites={sites}
+            planExtent={planExtent}
             boundary={boundary}
             sitesLayerUrls={sitesLayerUrls}
             selectedSites={selectedKeys}
@@ -296,7 +308,6 @@ export default function PublicApp({
             parcel={lookup.kind === "found" ? lookup.parcel.geometry : null}
             padding={padding}
             onReady={onReady}
-            onSites={setSites}
             onPick={onPick}
           />
         </div>

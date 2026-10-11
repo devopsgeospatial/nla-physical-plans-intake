@@ -94,6 +94,21 @@ export interface AddedAttachment {
 }
 
 const METADATA_TTL_MS = 5 * 60 * 1000;
+/** ArcGIS requests run at most this many at a time. */
+const PARALLEL_REQUESTS = 4;
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 /** Layer JSON is identical for every user, so it is cached per process and layer URL. */
 const metadataCache = new Map<string, { value: Promise<LayerMetadata>; expiresAt: number }>();
 
@@ -200,27 +215,86 @@ export class FeatureLayerClient {
     const meta = await this.getMetadata();
     const pageSize = Math.min(meta.maxRecordCount ?? 1000, 2000);
     const url = `${this.layerUrl}/query`;
-    const features: QueryFeature[] = [];
-    for (let offset = 0; ; offset += pageSize) {
-      const page = await withToken(this.tokens, (token) =>
-        arcgisRequest<QueryResponse>(url, { ...params, resultOffset: offset, resultRecordCount: pageSize }, { referer: this.tokens.referer, token }),
+    // A stable order, so pages fetched in parallel neither overlap nor skip records.
+    // (Statistics and distinct-value queries are left as they are: ArcGIS refuses an order on them.)
+    const ordered = params.outStatistics || params.returnDistinctValues ? params : { orderByFields: meta.objectIdField, ...params };
+    const page = (offset: number) =>
+      withToken(this.tokens, (token) =>
+        arcgisRequest<QueryResponse>(url, { ...ordered, resultOffset: offset, resultRecordCount: pageSize }, { referer: this.tokens.referer, token }),
       );
-      features.push(...(page.features ?? []));
-      if (!page.exceededTransferLimit || (page.features ?? []).length === 0) return features;
+    // Statistics come back in one small answer, and ArcGIS refuses paging on them with a spatial filter.
+    if (params.outStatistics) {
+      const stats = await withToken(this.tokens, (token) => arcgisRequest<QueryResponse>(url, params, { referer: this.tokens.referer, token }));
+      return stats.features ?? [];
     }
+    const first = await page(0);
+    const features = [...(first.features ?? [])];
+    if (!first.exceededTransferLimit || features.length === 0) return features;
+
+    // More pages: count them, then fetch them a few at a time instead of one after another.
+    const { geometry, geometryType, inSR, spatialRel, where } = params as Record<string, string | number | boolean | object>;
+    const counted = await withToken(this.tokens, (token) =>
+      arcgisRequest<{ count?: number }>(url, { where: where ?? "1=1", geometry, geometryType, inSR, spatialRel, returnCountOnly: true }, { referer: this.tokens.referer, token }),
+    );
+    const total = counted.count ?? 0;
+    const offsets: number[] = [];
+    for (let offset = features.length; offset < total; offset += pageSize) offsets.push(offset);
+    const pages = await mapWithConcurrency(offsets, PARALLEL_REQUESTS, page);
+    for (const p of pages) features.push(...(p.features ?? []));
+    return features;
+  }
+
+  /** Object IDs of the matching features (one request; no record limit applies). */
+  async queryObjectIds(params: Record<string, string | number | boolean | object>): Promise<number[]> {
+    const response = await withToken(this.tokens, (token) =>
+      arcgisRequest<{ objectIds?: number[] | null }>(`${this.layerUrl}/query`, { ...params, returnIdsOnly: true }, { referer: this.tokens.referer, token }),
+    );
+    return response.objectIds ?? [];
+  }
+
+  /** Extent of the matching features as [xmin, ymin, xmax, ymax], or null when none match. */
+  async queryExtent(params: Record<string, string | number | boolean | object>): Promise<[number, number, number, number] | null> {
+    const response = await withToken(this.tokens, (token) =>
+      arcgisRequest<{ count?: number; extent?: { xmin: number; ymin: number; xmax: number; ymax: number } | null }>(
+        `${this.layerUrl}/query`,
+        { ...params, returnExtentOnly: true },
+        { referer: this.tokens.referer, token },
+      ),
+    );
+    const e = response.extent;
+    return e && Number.isFinite(e.xmin) && (response.count ?? 1) > 0 ? [e.xmin, e.ymin, e.xmax, e.ymax] : null;
   }
 
   /** Attachment metadata (name, size, keywords) for the given features, grouped by feature. */
   async queryAttachments(objectIds: number[]): Promise<Map<number, AttachmentInfo[]>> {
-    const byFeature = new Map<number, AttachmentInfo[]>();
     const url = `${this.layerUrl}/queryAttachments`;
-    for (let i = 0; i < objectIds.length; i += 500) {
-      const chunk = objectIds.slice(i, i + 500);
-      const response = await withToken(this.tokens, (token) =>
+    const chunks: number[][] = [];
+    for (let i = 0; i < objectIds.length; i += 500) chunks.push(objectIds.slice(i, i + 500));
+    const responses = await mapWithConcurrency(chunks, PARALLEL_REQUESTS, (chunk) =>
+      withToken(this.tokens, (token) =>
         arcgisRequest<QueryAttachmentsResponse>(url, { objectIds: chunk.join(","), returnMetadata: true }, { referer: this.tokens.referer, token }),
-      );
-      for (const group of response.attachmentGroups ?? []) byFeature.set(group.parentObjectId, group.attachmentInfos ?? []);
-    }
+      ),
+    );
+    const byFeature = new Map<number, AttachmentInfo[]>();
+    for (const response of responses) for (const group of response.attachmentGroups ?? []) byFeature.set(group.parentObjectId, group.attachmentInfos ?? []);
+    return byFeature;
+  }
+
+  /**
+   * Attachments of every feature matching `where`, in one request (only features that have attachments
+   * come back). Falls back to querying by IDs if ArcGIS caps the answer.
+   */
+  async queryAttachmentsWhere(where: string, objectIds: () => number[]): Promise<Map<number, AttachmentInfo[]>> {
+    const response = await withToken(this.tokens, (token) =>
+      arcgisRequest<QueryAttachmentsResponse & { exceededTransferLimit?: boolean }>(
+        `${this.layerUrl}/queryAttachments`,
+        { definitionExpression: where, returnMetadata: true },
+        { referer: this.tokens.referer, token },
+      ),
+    );
+    if (response.exceededTransferLimit) return this.queryAttachments(objectIds());
+    const byFeature = new Map<number, AttachmentInfo[]>();
+    for (const group of response.attachmentGroups ?? []) byFeature.set(group.parentObjectId, group.attachmentInfos ?? []);
     return byFeature;
   }
 

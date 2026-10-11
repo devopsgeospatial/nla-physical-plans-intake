@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { TokenProvider } from "../arcgis/auth";
-import type { PublicConfig } from "../arcgis/config";
+import type { ResolvedPublicConfig as PublicConfig } from "./resolve";
 import { FeatureLayerClient } from "../arcgis/feature-layer";
 import { isPlannerAttachment } from "../plans/review-status";
 import type { District } from "./districts";
@@ -42,7 +42,7 @@ export async function listDocuments(config: PublicConfig, district: District): P
   const layer = publicPlans(config);
   const meta = await layer.getMetadata();
   if (!meta.hasAttachments) return [];
-  const plans = await layer.queryAll({ ...(await districtPlansQuery(config, district)), outFields: `${meta.objectIdField},approval_date,cell_1`, returnGeometry: false });
+  const plans = await layer.queryAll({ ...(await districtPlansQuery(config, district)), outFields: `${meta.objectIdField},${config.fields.approvalDate},${config.fields.cell}`, returnGeometry: false });
   const info = new Map(plans.map((p) => [Number(p.attributes[meta.objectIdField]), p.attributes]));
   const attachments = await layer.queryAttachments([...info.keys()]);
 
@@ -61,8 +61,8 @@ export async function listDocuments(config: PublicConfig, district: District): P
         name: att.name,
         size: att.size ?? null,
         source: isPlannerAttachment(att.keywords) || !att.keywords ? "district" : "nla",
-        approvedAt: typeof a.approval_date === "number" ? a.approval_date : null,
-        cell: typeof a.cell_1 === "string" ? a.cell_1 : null,
+        approvedAt: typeof a[config.fields.approvalDate] === "number" ? (a[config.fields.approvalDate] as number) : null,
+        cell: typeof a[config.fields.cell] === "string" ? (a[config.fields.cell] as string) : null,
       });
     }
   }

@@ -49,7 +49,11 @@ describe("projection", () => {
     const [x, y] = merc.rings[0]![0]!;
     const [refX, refY] = proj4("EPSG:4326", "EPSG:3857", [29.765, -2.09]); // independent reference
     assert.ok(Math.abs(x - refX) < 0.01 && Math.abs(y - refY) < 0.01, `${x}, ${y} vs ${refX}, ${refY}`);
-    assert.equal(projectWgs84PolygonLocally(wgs84, { wkid: 32735 }), null);
+    // WGS 84 / UTM zones are projected locally too (Muhanga in zone 35S: ~807.6 km E, ~9,768.7 km N).
+    const utm = projectWgs84PolygonLocally(wgs84, { wkid: 32735 })!;
+    assert.ok(Math.abs(utm.rings[0]![0]![0] - 807_592) < 1 && Math.abs(utm.rings[0]![0]![1] - 9_768_720) < 1);
+    // Other projected systems still go to the layer WKT or the geometry service.
+    assert.equal(projectWgs84PolygonLocally(wgs84, { wkid: 2056 }), null);
   });
 
   it("projects into TM Rwanda (ITRF2005) from the layer WKT", () => {
@@ -63,5 +67,21 @@ describe("projection", () => {
 
   it("returns null for WKT that proj4 cannot parse", () => {
     assert.equal(projectWgs84PolygonWithWkt(wgs84, { wkt: "NOT A WKT" }), null);
+  });
+});
+
+describe("WGS 84 / UTM layers (e.g. Rwanda_Physical_Plans, EPSG:32736)", () => {
+  it("projects locally, with no geometry service", async () => {
+    const { projectWgs84PolygonLocally, utmDefinition } = await import("../../lib/geo/esri-geometry");
+    assert.equal(utmDefinition(32736), "+proj=utm +zone=36 +south +datum=WGS84 +units=m +no_defs");
+    assert.equal(utmDefinition(32635), "+proj=utm +zone=35 +datum=WGS84 +units=m +no_defs");
+    assert.equal(utmDefinition(4326), null);
+    // Kigali (30.06 E, 1.95 S) in UTM 36S: about 172 km east of the 33 E central meridian's false easting.
+    const out = projectWgs84PolygonLocally({ rings: [[[30.06, -1.95], [30.061, -1.95], [30.061, -1.949], [30.06, -1.95]]], spatialReference: { wkid: 4326 } }, { wkid: 32736, latestWkid: 32736 });
+    assert.ok(out);
+    const [x, y] = out!.rings[0]![0]!;
+    assert.ok(Math.abs(x - 172_660) < 300, `easting ${x}`);
+    assert.ok(Math.abs(y - 9_784_160) < 300, `northing ${y}`);
+    assert.deepEqual(out!.spatialReference, { wkid: 32736 });
   });
 });

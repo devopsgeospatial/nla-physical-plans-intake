@@ -2,7 +2,9 @@ import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import Landing from "@/components/Landing";
 import SsoLink from "@/components/SsoLink";
+import { resolveField } from "@/lib/plans/attribute-mapping";
 import { liveDistrictSlugs } from "@/lib/public/availability";
+import { resolvePublicConfig } from "@/lib/public/resolve";
 import { DISTRICTS } from "@/lib/public/districts";
 import ReviewWorkspace, { type ReviewView } from "@/components/ReviewWorkspace";
 import { formatDateTime } from "@/components/StatusTag";
@@ -23,7 +25,7 @@ type SearchParams = { auth_error?: string; u?: string; revise?: string; view?: s
 export default async function Page({ searchParams }: { searchParams: Promise<SearchParams> }) {
   if (getAppMode() === "home") {
     // Districts open as soon as NLA approves a plan in them (checked against the live layer).
-    const live = await liveDistrictSlugs(getPublicConfig());
+    const live = await liveDistrictSlugs(await resolvePublicConfig(getPublicConfig()));
     const districts = DISTRICTS.map((d) => ({ slug: d.slug, name: d.name, province: d.province, live: live.has(d.slug) }));
     return <Landing {...getAppLinks()} districts={districts} />;
   }
@@ -109,7 +111,7 @@ async function reviewApp(config: ArcGisConfig, session: UserSession, params: Sea
   const submissions = await loadSubmissions(client, meta, { since: config.reviewSince });
   const view: ReviewView = params.view === "returned" || params.view === "approved" ? params.view : "waiting";
   const names = await fullNames(config.portalUrl, tokens, submissions.map((s) => s.planner));
-  const comment = meta.fields.find((f) => f.name.toLowerCase() === "remarks");
+  const comment = resolveField(meta.fields, "remarks");
   return (
     <ReviewWorkspace
       key={view} // switching lists closes the open submission

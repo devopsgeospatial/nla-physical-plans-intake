@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAppMode, getPublicConfig } from "@/lib/arcgis/config";
+import { resolvePublicConfig } from "@/lib/public/resolve";
 import { isDistrictLive } from "@/lib/public/availability";
 import { findDistrict } from "@/lib/public/districts";
 import { isPublicRecord, publicPlans } from "@/lib/public/documents";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 /** Public viewer: one document of an approved plan (?district=&oid=&aid=&name=). */
 export async function GET(request: NextRequest): Promise<NextResponse | Response> {
   if (getAppMode() !== "public") return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
-  const config = getPublicConfig();
+  const config = await resolvePublicConfig(getPublicConfig());
   const params = request.nextUrl.searchParams;
   const district = findDistrict(params.get("district") ?? "");
   const objectId = Number(params.get("oid"));

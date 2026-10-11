@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAppMode, getPublicConfig } from "@/lib/arcgis/config";
+import { resolvePublicConfig } from "@/lib/public/resolve";
 import { isDistrictLive } from "@/lib/public/availability";
 import { findDistrict, normalizeUpi } from "@/lib/public/districts";
 import { lookupAtPoint, lookupByUpi } from "@/lib/public/parcel-lookup";
@@ -14,7 +15,7 @@ export const maxDuration = 30;
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   if (getAppMode() !== "public") return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
-  const config = getPublicConfig();
+  const config = await resolvePublicConfig(getPublicConfig());
   const params = request.nextUrl.searchParams;
 
   const district = findDistrict(params.get("district") ?? "");

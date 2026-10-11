@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import esriConfig from "@arcgis/core/config";
 import Graphic from "@arcgis/core/Graphic";
-import type Extent from "@arcgis/core/geometry/Extent";
+import Extent from "@arcgis/core/geometry/Extent";
 import Polygon from "@arcgis/core/geometry/Polygon";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer";
@@ -13,29 +13,18 @@ import type UniqueValueRenderer from "@arcgis/core/renderers/UniqueValueRenderer
 import SimpleFillSymbol from "@arcgis/core/symbols/SimpleFillSymbol";
 import MapView from "@arcgis/core/views/MapView";
 import type FeatureLayerView from "@arcgis/core/views/layers/FeatureLayerView";
-import type Viewpoint from "@arcgis/core/Viewpoint";
-import type Basemap from "@arcgis/core/Basemap";
+import Basemap from "@arcgis/core/Basemap";
+import TileLayer from "@arcgis/core/layers/TileLayer";
 import Portal from "@arcgis/core/portal/Portal";
 import WebMap from "@arcgis/core/WebMap";
 import type { MultiPolygon, Polygon as GeoJsonPolygon } from "geojson";
 import type { MapSettings } from "@/lib/arcgis/config";
 import { geoJsonToEsriPolygon, type EsriPolygon } from "@/lib/geo/esri-geometry";
-import { SITE_NAME_FIELD, SITE_STAGE_FIELD, siteNameFromLayer, stageOf, STAGES, type PlanStatus } from "@/lib/public/stages";
+import type { SiteData } from "@/lib/public/summary";
+import { STAGES } from "@/lib/public/stages";
 
-/** One site plan in the district, with the approved parcels it was subdivided into. */
-export interface Site {
-  key: string;
-  name: string;
-  /** 1–5 from `site_stage`, or null when not recorded yet. */
-  stage: number | null;
-  status: PlanStatus | null;
-  geometry: Polygon;
-  parcelIds: number[];
-  parcels: number;
-  hectares: number;
-  layer: FeatureLayer;
-  objectId: number;
-}
+/** One site plan in the district, with the approved parcels it was subdivided into (from /api/public/summary). */
+export type Site = SiteData;
 
 export interface MapHandles {
   view: MapView;
@@ -56,6 +45,10 @@ interface Props {
   /** District boundary (WGS84 ArcGIS JSON). */
   boundary: EsriPolygon;
   sitesLayerUrls: string[];
+  /** The district's sites (from the server summary), or null while loading. */
+  sites: Site[] | null;
+  /** Where the district's approved plans are ([xmin, ymin, xmax, ymax], WGS84), once known. */
+  planExtent: [number, number, number, number] | null;
   /** Sites chosen in Explore (by stage, status or name), or null for all: the map shows and frames only them. */
   selectedSites: string[] | null;
   /** Colour the site plans by their stage. */
@@ -63,90 +56,129 @@ interface Props {
   parcel: GeoJsonPolygon | MultiPolygon | null;
   padding: { top: number; left: number; bottom: number };
   onReady: (handles: MapHandles) => void;
-  /** The district's sites, once loaded (after the map is ready). */
-  onSites: (sites: Site[]) => void;
   onPick: (lon: number, lat: number) => void;
 }
 
+/** Esri World Imagery, readable without sign-in or API key. */
+const PUBLIC_IMAGERY = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 const serviceUrl = (url: string) => url.replace(/\/+$/, "").toLowerCase();
 const SITE_OUTLINE = new SimpleRenderer({
   symbol: new SimpleFillSymbol({ color: [23, 160, 219, 0.06], outline: { color: [23, 160, 219, 1], width: 2.2 } }),
 });
+const wgs84Extent = ([xmin, ymin, xmax, ymax]: [number, number, number, number]) => new Extent({ xmin, ymin, xmax, ymax, spatialReference: { wkid: 4326 } });
 
-export default function PlansMap({ map, planLayerUrl, baseFilter, boundary, sitesLayerUrls, selectedSites, byStage, parcel, padding, onReady, onSites, onPick }: Props) {
+export default function PlansMap(props: Props) {
+  const { map, planLayerUrl, baseFilter, boundary, sitesLayerUrls, sites, planExtent, selectedSites, byStage, parcel, padding } = props;
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MapView | null>(null);
-  const stateRef = useRef<{ plansView: FeatureLayerView; sites: Site[]; siteViews: Map<FeatureLayer, FeatureLayerView>; stageLayer: GraphicsLayer; districtExtent: Extent } | null>(null);
+  /** Layer views used for filters, keyed by layer URL ("plans" for the plans layer). */
+  const layerViews = useRef(new Map<string, FeatureLayerView>());
+  const stageLayerRef = useRef<GraphicsLayer | null>(null);
   const parcelLayerRef = useRef<GraphicsLayer | null>(null);
-  const latest = useRef({ onReady, onSites, onPick, selectedSites, byStage });
-  latest.current = { onReady, onSites, onPick, selectedSites, byStage };
+  const startRef = useRef<Extent | null>(null);
+  const latest = useRef(props);
+  latest.current = props;
 
   useEffect(() => {
     if (!containerRef.current) return;
     esriConfig.portalUrl = map.portalUrl;
-    const webmap = new WebMap({ portalItem: { id: map.webMapId } });
+    // A public map never asks citizens to sign in to ArcGIS: anything not shared publicly is skipped.
+    esriConfig.request.useIdentity = false;
+    const district = Polygon.fromJSON(boundary);
     const parcelLayer = new GraphicsLayer({ title: "Searched parcel", listMode: "hide" });
     const stageLayer = new GraphicsLayer({ title: "Site stages", listMode: "hide", visible: false });
     const districtLayer = new GraphicsLayer({ title: "District boundary", listMode: "hide" });
-    const view = new MapView({ container: containerRef.current, map: webmap, popupEnabled: false, constraints: { snapToZoom: false } });
+    districtLayer.add(new Graphic({ geometry: district, symbol: new SimpleFillSymbol({ color: [0, 0, 0, 0], outline: { color: [255, 255, 255, 0.85], width: 1.5, style: "dash" } }) }));
+    // The map opens on the district straight away; nothing waits for ArcGIS queries.
+    startRef.current = district.extent!.expand(1.05);
+    const view = new MapView({ container: containerRef.current, extent: startRef.current ?? undefined, popupEnabled: false, constraints: { snapToZoom: false } });
     // The app draws its own map controls; only the attribution (required by Esri) stays.
     view.ui.components = [];
-    const district = Polygon.fromJSON(boundary);
-    let start: Viewpoint | Extent | null = null;
-    const home = () => {
-      if (start) view.goTo(start, { duration: 900 }).catch(() => undefined);
-    };
     viewRef.current = view;
+    stageLayerRef.current = stageLayer;
     parcelLayerRef.current = parcelLayer;
+    const views = layerViews.current;
+    views.clear();
     let cancelled = false;
 
-    view
-      .when(async () => {
-        districtLayer.add(new Graphic({ geometry: district, symbol: new SimpleFillSymbol({ color: [0, 0, 0, 0], outline: { color: [255, 255, 255, 0.85], width: 1.5, style: "dash" } }) }));
-        webmap.addMany([districtLayer, stageLayer, parcelLayer]);
+    (async () => {
+      // The district's web map; Esri's public imagery when the web map is not shared publicly.
+      let webmap = new WebMap({ portalItem: { id: map.webMapId } });
+      try {
+        await webmap.load();
+      } catch (err) {
+        console.warn("[map] web map unavailable (is it shared publicly?); showing imagery only", err);
+        webmap = new WebMap({ basemap: new Basemap({ title: "Imagery", baseLayers: [new TileLayer({ url: PUBLIC_IMAGERY })] }) });
+      }
+      if (cancelled) return;
+      webmap.addMany([districtLayer, stageLayer, parcelLayer]);
+      view.map = webmap;
 
-        const plans = webmap.allLayers.find((l) => l.type === "feature" && serviceUrl((l as FeatureLayer).url ?? "") === serviceUrl(planLayerUrl).replace(/\/\d+$/, "")) as
+      // Layers citizens may not open (e.g. the private editable plans layer) are dropped, not shown broken.
+      const operational = webmap.layers.toArray().filter((l) => ![districtLayer, stageLayer, parcelLayer].includes(l as GraphicsLayer));
+      void Promise.allSettled(operational.map((l) => l.load())).then(() => webmap.removeMany(operational.filter((l) => l.loadStatus === "failed")));
+
+      // The plans layer from the web map (keeps its zoning colours); added by address when the web map lacks it.
+      let plans = webmap.allLayers.find((l) => l.type === "feature" && serviceUrl((l as FeatureLayer).url ?? "") === serviceUrl(planLayerUrl).replace(/\/\d+$/, "")) as
+        | FeatureLayer
+        | undefined;
+      if (!plans) {
+        plans = new FeatureLayer({ url: planLayerUrl, title: "Physical plans", popupEnabled: false });
+        webmap.add(plans, webmap.layers.indexOf(districtLayer));
+      }
+      // Site boundaries: from the web map when it has them, added otherwise (drawing only, no queries).
+      const siteLayers = sitesLayerUrls.map((url) => {
+        const found = webmap.allLayers.find((l) => l.type === "feature" && `${serviceUrl((l as FeatureLayer).url ?? "")}/${(l as FeatureLayer).layerId}` === serviceUrl(url)) as
           | FeatureLayer
           | undefined;
-        if (!plans || cancelled) return;
-        await plans.load();
-        // After load: loading applies the web map's own layer definition, which would replace it.
-        plans.definitionExpression = baseFilter;
-        plans.visible = true;
-        // The web map colours plans by zoning; plans without a zoning value would not be drawn at all.
-        const renderer = plans.renderer as UniqueValueRenderer | null;
-        if (renderer?.type === "unique-value" && !renderer.defaultSymbol) {
-          const withDefault = renderer.clone();
-          withDefault.defaultSymbol = new SimpleFillSymbol({ color: [23, 160, 219, 0.35], outline: { color: [255, 255, 255, 0.9], width: 0.6 } });
-          withDefault.defaultLabel = "Approved plan (zoning not recorded)";
-          plans.renderer = withDefault;
-        }
-        const plansView = await view.whenLayerView(plans);
+        const layer = found ?? new FeatureLayer({ url, renderer: SITE_OUTLINE, popupEnabled: false });
+        if (!found) webmap.add(layer, webmap.layers.indexOf(plans!));
+        layer.visible = true;
+        return { url, layer };
+      });
 
-        // Open on the district's approved plans (or the whole district when there are none yet).
-        const planExtent = await plans.queryExtent({ where: baseFilter, geometry: district, spatialRelationship: "intersects" }).catch(() => null);
-        const districtExtent = planExtent && planExtent.count > 0 && planExtent.extent ? planExtent.extent.expand(1.3) : district.extent!.expand(1.05);
-        start = districtExtent;
-        await view.goTo(districtExtent, { animate: false }).catch(() => undefined);
+      await plans.load();
+      if (cancelled) return;
+      // After load: loading applies the web map's own layer definition, which would replace it.
+      plans.definitionExpression = baseFilter;
+      plans.visible = true;
+      // The web map colours plans by zoning; plans without a zoning value would not be drawn at all.
+      const renderer = plans.renderer as UniqueValueRenderer | null;
+      if (renderer?.type === "unique-value" && !renderer.defaultSymbol) {
+        const withDefault = renderer.clone();
+        withDefault.defaultSymbol = new SimpleFillSymbol({ color: [23, 160, 219, 0.35], outline: { color: [255, 255, 255, 0.9], width: 0.6 } });
+        withDefault.defaultLabel = "Approved plan (zoning not recorded)";
+        plans.renderer = withDefault;
+      }
 
-        const basemaps = async () => {
-          const portal = Portal.getDefault();
-          await portal.load();
-          // Loading each one fills in its title and thumbnail from its portal item.
-          const list = await portal.fetchBasemaps();
-          const loaded = await Promise.all(list.map((b) => b.load().then(() => b, () => null)));
-          return loaded.filter((b): b is Basemap => b !== null);
-        };
-        // The map and district figures first; the sites (heavier) follow.
-        latest.current.onReady({ view, home, basemaps, plans, district });
-        const { sites, siteViews } = await loadSites(webmap, view, sitesLayerUrls, district, plans, baseFilter);
-        if (cancelled) return;
-        stateRef.current = { plansView, sites, siteViews, stageLayer, districtExtent };
-        drawStages(stageLayer, sites);
+      const basemaps = async () => {
+        const portal = Portal.getDefault();
+        await portal.load();
+        // Loading each one fills in its title and thumbnail from its portal item.
+        const list = await portal.fetchBasemaps();
+        const loaded = await Promise.all(list.map((b) => b.load().then(() => b, () => null)));
+        return loaded.filter((b): b is Basemap => b !== null);
+      };
+      const home = () => {
+        if (startRef.current) view.goTo(startRef.current, { duration: 900 }).catch(() => undefined);
+      };
+      latest.current.onReady({ view, home, basemaps, plans, district });
+
+      // Layer views for the Explore filters, as each becomes ready.
+      void view.whenLayerView(plans).then((lv) => {
+        views.set("plans", lv);
         apply(false);
-        latest.current.onSites(sites);
-      })
-      .catch((err) => console.error("[map] web map failed to load", err));
+      });
+      for (const { url, layer } of siteLayers) {
+        void view
+          .whenLayerView(layer)
+          .then((lv) => {
+            views.set(serviceUrl(url), lv);
+            apply(false);
+          })
+          .catch((err) => console.warn(`[map] site layer ${url} unavailable`, err));
+      }
+    })().catch((err) => console.error("[map] web map failed to load", err));
 
     const click = view.on("click", (event) => {
       const { longitude, latitude } = event.mapPoint ?? {};
@@ -157,33 +189,63 @@ export default function PlansMap({ map, planLayerUrl, baseFilter, boundary, site
       click.remove();
       view.destroy();
       viewRef.current = null;
-      stateRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map.portalUrl, map.webMapId, planLayerUrl, baseFilter]);
 
+  // Once the district's plans are known, open on them (unless the visitor has already moved on to a parcel).
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !planExtent) return;
+    startRef.current = wgs84Extent(planExtent).expand(1.3);
+    if (!latest.current.parcel && !latest.current.selectedSites) view.when(() => view.goTo(startRef.current!, { duration: 600 }).catch(() => undefined));
+  }, [planExtent]);
+
+  // Each site filled with its stage colour (shown when "Colour sites by stage" is on).
+  useEffect(() => {
+    const layer = stageLayerRef.current;
+    if (!layer || !sites) return;
+    const fill = (hex: string, alpha: number) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16), alpha];
+    layer.removeAll();
+    layer.addMany(
+      sites.map((s) => {
+        const color = STAGES.find((x) => x.n === s.stage)?.color ?? "#a8b4bd";
+        return new Graphic({
+          geometry: new Polygon({ rings: s.rings, spatialReference: { wkid: 4326 } }),
+          attributes: { key: s.key },
+          symbol: new SimpleFillSymbol({ color: fill(color, 0.45), outline: { color: fill(color, 1), width: 2.5 } }),
+        });
+      }),
+    );
+    apply(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sites]);
+
   /** Shows only the chosen sites and their parcels, and frames them. */
   function apply(zoom: boolean) {
-    const state = stateRef.current;
     const view = viewRef.current;
-    if (!state || !view) return;
-    const { selectedSites: keys, byStage: colour } = latest.current;
-    const chosen = keys ? state.sites.filter((s) => keys.includes(s.key)) : null;
+    const { sites: all, selectedSites: keys, byStage: colour } = latest.current;
+    if (!view || !all) return;
+    const chosen = keys ? all.filter((s) => keys.includes(s.key)) : null;
 
-    state.plansView.filter = chosen ? new FeatureFilter({ objectIds: chosen.flatMap((s) => s.parcelIds).concat(-1) }) : null;
-    for (const [layer, layerView] of state.siteViews) {
-      const ids = chosen?.filter((s) => s.layer === layer).map((s) => s.objectId);
+    const plansView = layerViews.current.get("plans");
+    if (plansView) plansView.filter = chosen ? new FeatureFilter({ objectIds: chosen.flatMap((s) => s.parcelIds).concat(-1) }) : null;
+    for (const [url, layerView] of layerViews.current) {
+      if (url === "plans") continue;
+      const ids = chosen?.filter((s) => serviceUrl(s.layerUrl) === url).map((s) => s.objectId);
       layerView.filter = ids ? new FeatureFilter({ objectIds: ids.concat(-1) }) : null;
     }
-    state.stageLayer.visible = colour;
-    state.stageLayer.graphics.forEach((g) => (g.visible = !chosen || chosen.some((s) => s.key === g.attributes?.key)));
+    if (stageLayerRef.current) {
+      stageLayerRef.current.visible = colour;
+      stageLayerRef.current.graphics.forEach((g) => (g.visible = !chosen || chosen.some((s) => s.key === g.attributes?.key)));
+    }
 
     if (!zoom) return;
     if (chosen && chosen.length > 0) {
-      const extent = chosen.reduce<Extent | null>((acc, s) => (acc ? acc.union(s.geometry.extent!) : s.geometry.extent!.clone()), null);
-      if (extent) view.goTo(extent.expand(1.35), { duration: 900 }).catch(() => undefined);
-    } else if (!chosen) {
-      view.goTo(state.districtExtent, { duration: 900 }).catch(() => undefined);
+      const extent = chosen.map((s) => wgs84Extent(s.extent)).reduce((acc, e) => acc.union(e));
+      view.goTo(extent.expand(1.35), { duration: 900 }).catch(() => undefined);
+    } else if (!chosen && startRef.current) {
+      view.goTo(startRef.current, { duration: 900 }).catch(() => undefined);
     }
   }
 
@@ -210,95 +272,4 @@ export default function PlansMap({ map, planLayerUrl, baseFilter, boundary, site
   }, [parcel]);
 
   return <div ref={containerRef} className="absolute inset-0" aria-label="Map of the physical plans" />;
-}
-
-/**
- * The site plans in the district, from each site layer (used from the web map when it is there, added
- * otherwise), each with the approved parcels inside it.
- */
-async function loadSites(webmap: WebMap, view: MapView, urls: string[], district: Polygon, plans: FeatureLayer, baseFilter: string) {
-  const sites: Site[] = [];
-  const siteViews = new Map<FeatureLayer, FeatureLayerView>();
-  for (const url of urls) {
-    try {
-      let layer = webmap.allLayers.find((l) => l.type === "feature" && serviceUrl((l as FeatureLayer).url ?? "") + `/${(l as FeatureLayer).layerId}` === serviceUrl(url)) as
-        | FeatureLayer
-        | undefined;
-      if (!layer) {
-        layer = new FeatureLayer({ url, renderer: SITE_OUTLINE, popupEnabled: false });
-        webmap.add(layer, webmap.layers.indexOf(plans));
-      }
-      await layer.load();
-      layer.visible = true;
-      const field = (name: string) => layer!.fields.find((f) => f.name.toLowerCase() === name)?.name;
-      const nameField = field(SITE_NAME_FIELD);
-      const stageField = field(SITE_STAGE_FIELD);
-      const result = await layer.queryFeatures({
-        where: "1=1",
-        geometry: district,
-        spatialRelationship: "intersects",
-        outFields: [layer.objectIdField, nameField, stageField].filter((f): f is string => !!f),
-        returnGeometry: true,
-        outSpatialReference: view.spatialReference,
-        // Site outlines are very detailed; ~1 m is plenty to find their parcels and frame them, and keeps queries quick.
-        maxAllowableOffset: 1,
-      });
-      const layerName = siteNameFromLayer(layer.title || layer.sourceJSON?.name || "Site");
-      const unnamed = result.features.filter((f) => !String((nameField && f.attributes[nameField]) ?? "").trim()).length;
-      let n = 0;
-      const loaded = await Promise.all(
-        result.features.map(async (f) => {
-          const geometry = f.geometry as Polygon;
-          const [parcelIds, stats] = await Promise.all([
-            plans.queryObjectIds({ where: baseFilter, geometry, spatialRelationship: "intersects" }).catch(() => [] as number[]),
-            plans
-              .queryFeatures({
-                where: baseFilter,
-                geometry,
-                spatialRelationship: "intersects",
-                outStatistics: [{ statisticType: "sum", onStatisticField: "area_sqm", outStatisticFieldName: "a" }],
-              })
-              .catch(() => null),
-          ]);
-          return { f, geometry, parcelIds: (parcelIds ?? []).map(Number), hectares: Number(stats?.features[0]?.attributes.a ?? 0) / 10_000 };
-        }),
-      );
-      for (const { f, geometry, parcelIds, hectares } of loaded) {
-        const named = nameField ? String(f.attributes[nameField] ?? "").trim() : "";
-        const stage = stageField ? stageOf(f.attributes[stageField]) : null;
-        const objectId = Number(f.attributes[layer.objectIdField]);
-        sites.push({
-          key: `${layer.url}/${layer.layerId}#${objectId}`,
-          name: named || (unnamed > 1 ? `${layerName} ${++n}` : layerName),
-          stage: stage?.n ?? null,
-          status: stage?.status ?? null,
-          geometry,
-          parcelIds,
-          parcels: parcelIds.length,
-          hectares,
-          layer,
-          objectId,
-        });
-      }
-      siteViews.set(layer, await view.whenLayerView(layer));
-    } catch (err) {
-      console.warn(`[map] site layer ${url} could not be loaded`, err);
-    }
-  }
-  return { sites: sites.sort((a, b) => a.name.localeCompare(b.name)), siteViews };
-}
-
-/** Each site filled with its stage colour (shown when "Colour sites by stage" is on). */
-function drawStages(layer: GraphicsLayer, sites: Site[]) {
-  const fill = (hex: string, alpha: number) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16), alpha];
-  layer.addMany(
-    sites.map((s) => {
-      const color = STAGES.find((x) => x.n === s.stage)?.color ?? "#a8b4bd";
-      return new Graphic({
-        geometry: s.geometry,
-        attributes: { key: s.key },
-        symbol: new SimpleFillSymbol({ color: fill(color, 0.45), outline: { color: fill(color, 1), width: 2.5 } }),
-      });
-    }),
-  );
 }

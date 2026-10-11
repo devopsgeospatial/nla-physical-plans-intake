@@ -75,7 +75,7 @@ const ACCESS_TOKEN_SECONDS = 30 * 60;
 const str = (name: string, length = 255) => ({ name, type: "esriFieldTypeString", alias: name, length, nullable: true, editable: true });
 const date = (name: string) => ({ name, type: "esriFieldTypeDate", alias: name, length: 8, nullable: true, editable: true });
 
-/** Same fields as https://services7.arcgis.com/htgaiKX6RV2DDGgK/arcgis/rest/services/Physical_Plans/FeatureServer/0 */
+/** Same fields as https://services7.arcgis.com/htgaiKX6RV2DDGgK/arcgis/rest/services/Rwanda_Physical_Plans/FeatureServer/0 */
 const FIELDS: { name: string; type: string; alias: string; length?: number; nullable: boolean; editable: boolean }[] = [
   { name: "OBJECTID", type: "esriFieldTypeOID", alias: "OBJECTID", nullable: false, editable: false },
   str("plan_id"),
@@ -320,7 +320,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     if (sub === "/query") return sendJson(res, query(params));
 
     if (sub === "/queryAttachments") {
-      const ids = (params.get("objectIds") ?? "").split(",").map(Number).filter(Boolean);
+      // By IDs, or (definitionExpression) every feature matching a where clause, as on ArcGIS Online.
+      const condition = params.get("definitionExpression");
+      const predicate = condition ? parseWhere(condition.trim()) : null;
+      if (condition && !predicate) return sendJson(res, arcgisError(400, `Emulator does not support definitionExpression: ${condition}`));
+      const ids = predicate
+        ? [...features.entries()].filter(([, f]) => predicate(f.attributes)).map(([oid]) => oid)
+        : (params.get("objectIds") ?? "").split(",").map(Number).filter(Boolean);
       const attachmentGroups = ids
         .map((oid) => ({ oid, f: features.get(oid) }))
         .filter(({ f }) => f && f.attachments.length > 0)
@@ -408,6 +414,8 @@ function query(params: URLSearchParams) {
     const ys = pts.map((p) => p[1]!);
     return Math.min(...xs) <= envelope.xmax && Math.max(...xs) >= envelope.xmin && Math.min(...ys) <= envelope.ymax && Math.max(...ys) >= envelope.ymin;
   });
+
+  if (params.get("returnCountOnly") === "true") return { count: matches.length };
 
   const orderBy = params.get("orderByFields")?.match(/^(\w+)( DESC)?$/i);
   if (orderBy) {
