@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { refuseForeignOrigin } from "@/lib/http/origin";
 import { ConfigurationError, getArcGisConfig, getUploadLimits, type UploadLimits } from "@/lib/arcgis/config";
 import { FeatureRejectedError } from "@/lib/arcgis/feature-layer";
 import { ArcGisRequestError } from "@/lib/arcgis/rest";
 import { createUserTokenProvider, SessionExpiredError } from "@/lib/auth/oauth";
-import { readSession, SESSION_COOKIE, seal, sessionCookieOptions } from "@/lib/auth/session";
+import { clearCookie, readSession, SESSION_COOKIE, seal, sessionCookieOptions } from "@/lib/auth/session";
 import { parseUploadFile, UploadValidationError } from "@/lib/geo/parse-upload";
 import { assertContentLength, formatBytes, readPdfDocuments, RequestValidationError } from "@/lib/http/uploads";
 import {
@@ -26,6 +27,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const config = getArcGisConfig();
     if (config.appMode !== "submission") return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
+    const foreign = refuseForeignOrigin(request, config.appUrl);
+    if (foreign) return foreign;
     const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
     if (!session) throw new SessionExpiredError("Please sign in with your ArcGIS account.");
     const tokens = createUserTokenProvider(config, session);
@@ -78,12 +81,15 @@ async function readUpload(form: FormData, limits: UploadLimits): Promise<Omit<Ap
 }
 
 function errorResponse(err: unknown, requestId: string): NextResponse {
-  const body = (status: number, error: string, extra: Record<string, unknown> = {}) =>
-    NextResponse.json({ ok: false, requestId, error, ...extra }, { status });
+  const body = (status: number, error: string, extra: Record<string, unknown> = {}) => {
+    // Every refusal is logged with its reason, so a planner's report can be traced from the server log.
+    if (status < 500) console.warn(`[append:${requestId}] refused ${status}: ${error}`);
+    return NextResponse.json({ ok: false, requestId, error, ...extra }, { status });
+  };
 
   if (err instanceof SessionExpiredError) {
     const response = body(401, err.message, { signInRequired: true });
-    response.cookies.delete(SESSION_COOKIE);
+    clearCookie(response, SESSION_COOKIE);
     return response;
   }
   if (err instanceof RequestValidationError) return body(err.status, err.message, { field: err.field });

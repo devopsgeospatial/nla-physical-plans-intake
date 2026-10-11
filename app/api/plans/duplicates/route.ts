@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { refuseForeignOrigin } from "@/lib/http/origin";
 import { getArcGisConfig } from "@/lib/arcgis/config";
 import { FeatureLayerClient } from "@/lib/arcgis/feature-layer";
 import { ArcGisRequestError } from "@/lib/arcgis/rest";
@@ -21,6 +22,8 @@ export const maxDuration = 60;
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const config = getArcGisConfig();
   if (config.appMode !== "submission") return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
+  const foreign = refuseForeignOrigin(request, config.appUrl);
+  if (foreign) return foreign;
   const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
   if (!session) return NextResponse.json({ ok: false, error: "Please sign in.", signInRequired: true }, { status: 401 });
 

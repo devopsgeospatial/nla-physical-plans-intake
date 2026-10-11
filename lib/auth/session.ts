@@ -63,14 +63,27 @@ export function readSession(sealed: string | undefined, config: { sessionSecret:
   return session;
 }
 
+/**
+ * Cookie attributes for the app's own cookies. In production they are SameSite=None + Partitioned
+ * (CHIPS) so the apps also work embedded in another site, e.g. an ArcGIS Experience Builder page,
+ * where browsers drop ordinary cookies of the framed app. Partitioned cookies are kept separately per
+ * embedding site, so a session started inside one page is never shared with another. Requests that
+ * change data check their Origin (see lib/http/origin.ts), which SameSite=Lax used to cover.
+ */
+export function cookieBase(path = "/") {
+  const production = process.env.NODE_ENV === "production";
+  return production
+    ? { httpOnly: true, secure: true, sameSite: "none" as const, partitioned: true, path }
+    : { httpOnly: true, secure: false, sameSite: "lax" as const, path };
+}
+
 export function sessionCookieOptions(session: UserSession) {
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    path: "/",
-    expires: new Date(session.refreshExpiresAt),
-  };
+  return { ...cookieBase(), expires: new Date(session.refreshExpiresAt) };
+}
+
+/** Expires a cookie set with cookieBase (a Partitioned cookie is only removed with the same attributes). */
+export function clearCookie(response: { cookies: { set: (name: string, value: string, options: object) => unknown } }, name: string, path = "/") {
+  response.cookies.set(name, "", { ...cookieBase(path), maxAge: 0, expires: new Date(0) });
 }
 
 function deriveKey(secret: string): Buffer {

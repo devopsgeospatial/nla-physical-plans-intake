@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { refuseForeignOrigin } from "@/lib/http/origin";
 import { getArcGisConfig, getUploadLimits } from "@/lib/arcgis/config";
 import { FeatureLayerClient } from "@/lib/arcgis/feature-layer";
 import { ArcGisRequestError } from "@/lib/arcgis/rest";
 import { createUserTokenProvider, SessionExpiredError } from "@/lib/auth/oauth";
-import { readSession, SESSION_COOKIE, seal, sessionCookieOptions } from "@/lib/auth/session";
+import { clearCookie, readSession, SESSION_COOKIE, seal, sessionCookieOptions } from "@/lib/auth/session";
 import { assertContentLength, readPdfDocuments, RequestValidationError } from "@/lib/http/uploads";
 import { recordDecision, ReviewError, type Decision } from "@/lib/plans/review";
 
@@ -18,6 +19,8 @@ export const maxDuration = 120;
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const config = getArcGisConfig();
   if (config.appMode !== "review") return NextResponse.json({ ok: false, error: "Not found." }, { status: 404 });
+  const foreign = refuseForeignOrigin(request, config.appUrl);
+  if (foreign) return foreign;
   const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
   if (!session) return NextResponse.json({ ok: false, error: "Please sign in again.", signInRequired: true }, { status: 401 });
 
@@ -51,7 +54,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } catch (err) {
     if (err instanceof SessionExpiredError) {
       const response = NextResponse.json({ ok: false, error: err.message, signInRequired: true }, { status: 401 });
-      response.cookies.delete(SESSION_COOKIE);
+      clearCookie(response, SESSION_COOKIE);
       return response;
     }
     if (err instanceof RequestValidationError) return NextResponse.json({ ok: false, error: err.message }, { status: err.status });

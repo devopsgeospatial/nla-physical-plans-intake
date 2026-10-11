@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getArcGisConfig } from "@/lib/arcgis/config";
 import { ArcGisRequestError } from "@/lib/arcgis/rest";
 import { exchangeCode, SignInError } from "@/lib/auth/oauth";
-import { OAUTH_STATE_COOKIE, SESSION_COOKIE, seal, sessionCookieOptions, unseal, type OAuthState } from "@/lib/auth/session";
+import { clearCookie, OAUTH_STATE_COOKIE, SESSION_COOKIE, seal, sessionCookieOptions, unseal, type OAuthState } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const url = new URL("/", config.appUrl);
     url.searchParams.set("auth_error", message);
     const response = NextResponse.redirect(url);
-    response.cookies.delete({ name: OAUTH_STATE_COOKIE, path: "/api/auth" });
+    clearCookie(response, OAUTH_STATE_COOKIE, "/api/auth");
     return response;
   };
 
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const session = await exchangeCode(config, code, pending.codeVerifier);
     const response = NextResponse.redirect(new URL(pending.returnTo, config.appUrl));
     response.cookies.set(SESSION_COOKIE, seal(session, config.sessionSecret), sessionCookieOptions(session));
-    response.cookies.delete({ name: OAUTH_STATE_COOKIE, path: "/api/auth" });
+    clearCookie(response, OAUTH_STATE_COOKIE, "/api/auth");
     console.info(`[auth] signed in ${session.username}`);
     return response;
   } catch (err) {

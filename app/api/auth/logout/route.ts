@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { refuseForeignOrigin } from "@/lib/http/origin";
 import { getArcGisConfig } from "@/lib/arcgis/config";
 import { arcgisRequest } from "@/lib/arcgis/rest";
-import { readSession, SESSION_COOKIE } from "@/lib/auth/session";
+import { clearCookie, readSession, SESSION_COOKIE } from "@/lib/auth/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,8 @@ export const dynamic = "force-dynamic";
 /** Clears the session cookie and revokes the refresh token (best effort). */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const config = getArcGisConfig();
+  const foreign = refuseForeignOrigin(request, config.appUrl);
+  if (foreign) return foreign;
   const session = readSession(request.cookies.get(SESSION_COOKIE)?.value, config);
   if (session) {
     await arcgisRequest(
@@ -18,6 +21,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ).catch((err) => console.warn("[auth] refresh token revocation failed", err));
   }
   const response = NextResponse.redirect(new URL("/", config.appUrl), 303);
-  response.cookies.delete(SESSION_COOKIE);
+  clearCookie(response, SESSION_COOKIE);
   return response;
 }

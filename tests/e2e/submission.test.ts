@@ -531,6 +531,15 @@ describe("append to Physical_Plans (production build vs ArcGIS emulator)", () =>
     assert.equal((await doc.json()).features.length, 2);
   });
 
+  it("refuses data-changing requests posted from another website", async () => {
+    const planner = new Browser();
+    await planner.signIn("planner.muhanga");
+    const res = await planner.request(`${APP}/api/plans/submit`, { method: "POST", body: await upload({ file: GEOJSON }), headers: { origin: "https://evil.example" } });
+    assert.equal(res.status, 403);
+    const own = await planner.request(`${APP}/api/plans/duplicates`, { method: "POST", body: JSON.stringify({ items: [] }), headers: { origin: APP, "content-type": "application/json" } });
+    assert.equal(own.status, 200, "the app's own pages (also when embedded) are accepted");
+  });
+
   it("signs out and revokes the session", async () => {
     const planner = new Browser();
     await planner.signIn("planner.muhanga");

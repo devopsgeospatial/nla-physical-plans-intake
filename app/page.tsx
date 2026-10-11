@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import Landing from "@/components/Landing";
+import SsoLink from "@/components/SsoLink";
 import { liveDistrictSlugs } from "@/lib/public/availability";
 import { DISTRICTS } from "@/lib/public/districts";
 import ReviewWorkspace, { type ReviewView } from "@/components/ReviewWorkspace";
@@ -191,9 +192,7 @@ function SignIn({ title, authError, username }: { title: string; authError?: str
 
       <p className="mt-6 text-center text-[14px] text-graphite">
         Organization or two-step sign-in?{" "}
-        <a href="/api/auth/login" className="font-medium text-nla underline underline-offset-2 hover:text-nla-light">
-          Continue with ArcGIS
-        </a>
+        <SsoLink className="font-medium text-nla underline underline-offset-2 hover:text-nla-light" />
       </p>
     </HubScreen>
   );

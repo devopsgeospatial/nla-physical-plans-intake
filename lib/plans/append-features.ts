@@ -267,7 +267,9 @@ function assertLayerAccepts(meta: LayerMetadata, needsAttachments: boolean): voi
   }
   const caps = meta.capabilities.toLowerCase();
   if (!caps.includes("create") && !caps.includes("editing")) {
-    throw new LayerSchemaError(`"${meta.name}" does not allow adding features (capabilities: ${meta.capabilities}).`);
+    throw new LayerSchemaError(
+      `Editing is turned off on the "${meta.name}" layer, so plans cannot be added. Ask the layer owner to turn editing back on in ArcGIS Online (Settings → Editing).`,
+    );
   }
   if (needsAttachments && !meta.hasAttachments) {
     throw new LayerSchemaError(`Attachments are turned off on "${meta.name}". Ask the layer owner to enable them, or submit without PDFs.`);
