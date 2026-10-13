@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import type Graphic from "@arcgis/core/Graphic";
-import type EsriPolygon from "@arcgis/core/geometry/Polygon";
-import type FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import type Basemap from "@arcgis/core/Basemap";
 import type MapView from "@arcgis/core/views/MapView";
 import type { ReferenceDocument } from "@/lib/public/districts";
 import type { PublicDocument } from "@/lib/public/documents";
 import { STAGES, stagesFor, type PlanStatus } from "@/lib/public/stages";
 import type { Site } from "./PlansMap";
+import { selectSites } from "@/lib/public/selection";
 
 /** What Explore narrows the map to. */
 export interface Selection {
@@ -27,22 +25,7 @@ export interface DistrictTotals {
   hectares: number;
 }
 
-/** The sites the selection points at, or null when nothing is chosen (the whole district). */
-export function selectSites(
-  sites: Site[],
-  selection: Selection,
-): Site[] | null {
-  if (selection.site) return sites.filter((s) => s.key === selection.site);
-  if (!selection.status && selection.stage === null) return null;
-  return sites.filter(
-    (s) =>
-      (!selection.status || s.status === selection.status) &&
-      (selection.stage === null ||
-        (selection.stage === 0
-          ? s.stage === null
-          : s.stage === selection.stage)),
-  );
-}
+export { selectSites };
 
 const fmt = (n: number) => Math.round(n).toLocaleString("en-GB");
 const ha = (n: number) => (n >= 100 ? fmt(n) : n.toFixed(1));
@@ -518,189 +501,37 @@ function DocLink({
 
 // ---- Download ----------------------------------------------------------------------------------
 
-/** Not published: owners' parcel UPIs and internal bookkeeping fields. */
-const PRIVATE_FIELDS =
-  /^(parcel_upi|upi|created_user|created_us|created_date|created_da|last_edited_user|last_edite|last_edited_date|last_edi_1|creator|creationdate|editor|editdate|globalid|shape__area|shape__length|shape_leng)$/i;
+type DownloadFormat = "csv" | "geojson" | "shp" | "sites";
 
-export function Download({
-  plans,
-  district,
-  baseFilter,
-  sites,
-  selected,
-  label,
-}: {
-  plans: FeatureLayer | null;
-  district: EsriPolygon | null;
-  baseFilter: string;
-  sites: Site[] | null;
-  /** The sites chosen in Explore, or null for the whole district. */
-  selected: Site[] | null;
-  label: string;
-}) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
-
-  /** The planned parcels of the chosen sites, or of the whole district. */
-  async function fetchAll(geometry: boolean) {
-    const out: Graphic[] = [];
-    const common = {
-      where: baseFilter,
-      outFields: ["*"],
-      returnGeometry: geometry,
-      outSpatialReference: { wkid: 4326 },
-    };
-    if (selected) {
-      const ids = [...new Set(selected.flatMap((s) => s.parcelIds))];
-      for (let i = 0; i < ids.length; i += 500) {
-        const r = await plans!.queryFeatures({
-          ...common,
-          objectIds: ids.slice(i, i + 500),
-        });
-        out.push(...r.features);
-        setMessage(`Fetched ${out.length.toLocaleString("en-GB")} records…`);
-      }
-      return out;
-    }
-    for (let start = 0; ;) {
-      const r = await plans!.queryFeatures({
-        ...common,
-        geometry: district!,
-        spatialRelationship: "intersects",
-        orderByFields: [plans!.objectIdField],
-        start,
-        num: 1000,
-      });
-      out.push(...r.features);
-      setMessage(`Fetched ${out.length.toLocaleString("en-GB")} records…`);
-      if (
-        r.features.length === 0 ||
-        (!r.exceededTransferLimit && r.features.length < 1000)
-      )
-        return out;
-      start += r.features.length;
-    }
-  }
-
-  /** The site each parcel belongs to, for the exports. */
-  const siteOf = (objectId: number) =>
-    (sites ?? []).find((s) => s.parcelIds.includes(objectId));
-
-  async function run(kind: "csv" | "geojson" | "sites") {
-    if (!plans || !district) return;
-    setBusy(kind);
-    setMessage("Preparing…");
+/**
+ * Files are built on the server (/api/public/download) and fetched as ordinary links: that works in a
+ * normal browser tab and inside an Experience Builder page, whose frame blocks files made in the page.
+ * When embedded, each download opens in a new tab, which the frame allows.
+ */
+export function Download({ district, selection, selected }: { district: string; selection: Selection; selected: Site[] | null }) {
+  const [embedded, setEmbedded] = useState(false);
+  const [started, setStarted] = useState<DownloadFormat | null>(null);
+  useEffect(() => {
     try {
-      const fields = plans.fields.filter(
-        (f) =>
-          !["geometry", "blob", "raster", "xml", "global-id"].includes(
-            f.type,
-          ) && !PRIVATE_FIELDS.test(f.name),
-      );
-      const value = (type: string, v: unknown) =>
-        v === null || v === undefined
-          ? ""
-          : type === "date"
-            ? new Date(v as number).toISOString().slice(0, 10)
-            : String(v);
-      const stageName = (s: Site | undefined) =>
-        STAGES.find((x) => x.n === s?.stage)?.name ?? "";
-      const stamp = new Date().toISOString().slice(0, 10);
-      if (kind === "sites") {
-        const list = selected ?? sites ?? [];
-        const lines = ["Site,Stage,Status,Planned parcels,Area (ha)"].concat(
-          list.map((s) =>
-            [
-              csv(s.name),
-              csv(stageName(s) || "Not recorded"),
-              s.status ?? "",
-              s.parcels,
-              s.hectares.toFixed(2),
-            ].join(","),
-          ),
-        );
-        save(
-          `﻿${lines.join("\r\n")}`,
-          `physical-plans_sites_${label}_${stamp}.csv`,
-          "text/csv;charset=utf-8",
-        );
-        setMessage(
-          `${list.length} site${list.length === 1 ? "" : "s"} downloaded.`,
-        );
-      } else {
-        const records = await fetchAll(kind === "geojson");
-        const oid = plans.objectIdField;
-        if (kind === "csv") {
-          const head = fields
-            .map((f) => csv(f.alias || f.name))
-            .concat("Site", "Site stage")
-            .join(",");
-          const body = records.map((r) => {
-            const site = siteOf(Number(r.attributes[oid]));
-            return fields
-              .map((f) => csv(value(f.type, r.attributes[f.name])))
-              .concat(csv(site?.name ?? ""), csv(stageName(site)))
-              .join(",");
-          });
-          save(
-            `﻿${[head, ...body].join("\r\n")}`,
-            `physical-plans_${label}_${stamp}.csv`,
-            "text/csv;charset=utf-8",
-          );
-        } else {
-          const features = records.map((r) => {
-            const site = siteOf(Number(r.attributes[oid]));
-            return {
-              type: "Feature",
-              properties: Object.fromEntries(
-                fields
-                  .map((f) => [f.name, value(f.type, r.attributes[f.name])])
-                  .concat([
-                    ["site_name", site?.name ?? ""],
-                    ["site_stage", stageName(site)],
-                  ]),
-              ),
-              geometry:
-                r.geometry && "rings" in r.geometry
-                  ? {
-                      type: "Polygon",
-                      coordinates: (r.geometry as EsriPolygon).rings,
-                    }
-                  : null,
-            };
-          });
-          save(
-            JSON.stringify({ type: "FeatureCollection", features }),
-            `physical-plans_${label}_${stamp}.geojson`,
-            "application/geo+json",
-          );
-        }
-        setMessage(
-          `${records.length.toLocaleString("en-GB")} planned parcels downloaded.`,
-        );
-      }
-    } catch (err) {
-      console.error(err);
-      setMessage("The download failed. Please try again.");
+      setEmbedded(window.self !== window.top);
+    } catch {
+      setEmbedded(true);
     }
-    setBusy(null);
-  }
+  }, []);
 
-  const options: [
-    kind: "csv" | "geojson" | "sites",
-    title: string,
-    subtitle: string,
-  ][] = [
-    [
-      "csv",
-      "Planned parcels (CSV)",
-      "Opens in Excel, one row per parcel, with its site",
-    ],
-    [
-      "geojson",
-      "Planned parcels with boundaries (GeoJSON)",
-      "For QGIS and ArcGIS Pro",
-    ],
+  const href = (format: DownloadFormat) => {
+    const q = new URLSearchParams({ district, format });
+    if (selection.status) q.set("status", selection.status);
+    if (selection.stage !== null) q.set("stage", String(selection.stage));
+    if (selection.site) q.set("site", selection.site);
+    if (embedded) q.set("start", "1");
+    return `/api/public/download?${q}`;
+  };
+
+  const options: [format: DownloadFormat, title: string, subtitle: string][] = [
+    ["shp", "Planned parcels (Shapefile)", "Zipped .shp in WGS 84, for ArcGIS Pro, QGIS and AutoCAD Map"],
+    ["geojson", "Planned parcels with boundaries (GeoJSON)", "For QGIS, ArcGIS Pro and web maps"],
+    ["csv", "Planned parcels (CSV)", "Opens in Excel, one row per parcel, with its site"],
     ["sites", "Sites (CSV)", "Each site with its stage, parcels and hectares"],
   ];
   return (
@@ -710,37 +541,26 @@ export function Download({
           ? `Downloads cover the ${selected.length === 1 ? "site" : `${selected.length} sites`} chosen in Explore.`
           : "Downloads cover every approved plan in the district. Choose a site or stage in Explore to narrow them."}
       </p>
-      {options.map(([kind, title, subtitle]) => (
-        <button
-          key={kind}
-          type="button"
-          disabled={!plans || busy !== null}
-          onClick={() => run(kind)}
-          className="block w-full rounded-lg border border-[#e6ebef] bg-white px-3.5 py-3 text-left transition enabled:hover:translate-x-1 enabled:hover:bg-[#f7fafc] disabled:opacity-50"
+      {options.map(([format, title, subtitle]) => (
+        <a
+          key={format}
+          href={href(format)}
+          target={embedded ? "_blank" : undefined}
+          rel="noopener"
+          onClick={() => setStarted(format)}
+          className="block w-full rounded-lg border border-[#e6ebef] bg-white px-3.5 py-3 text-left transition hover:translate-x-1 hover:bg-[#f7fafc]"
         >
-          <span className="block text-[14px] text-[#14212b]">
-            {busy === kind ? "Preparing…" : title}
-          </span>
+          <span className="block text-[14px] text-[#14212b]">{title}</span>
           <span className="block text-[12px] text-[#6b7c8a]">{subtitle}</span>
-        </button>
+        </a>
       ))}
-      {message && <p className="text-[13px] text-[#51626f]">{message}</p>}
+      {started && (
+        <p className="text-[13px] text-[#51626f]">
+          {embedded ? "Your download opens in a new tab and starts in a few seconds." : "Your download starts in a few seconds."}
+        </p>
+      )}
     </div>
   );
-}
-
-function csv(value: string): string {
-  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-}
-
-function save(text: string, name: string, type: string) {
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type }));
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
 // ---- Legend, layers and basemaps (own panels: the SDK widgets would multiply the bundle) ------

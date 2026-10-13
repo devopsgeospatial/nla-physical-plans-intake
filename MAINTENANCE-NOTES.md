@@ -103,6 +103,8 @@ npm run deploy
 | Colours of Submission and Review | the colour list at the top of `app/globals.css` (`--color-nla`, `--color-ink`, …) |
 | Colours of the public map | the `#` colour codes in `components/public/*.tsx` |
 | Public map panels (Insights, Explore, Documents, Download, Legend, Layers, Basemaps) | `components/public/Panels.tsx` |
+| Public map downloads (CSV, GeoJSON, Shapefile, sites): columns and file names | `lib/public/export.ts` (built on the server) |
+| Fields never published to the public (UPIs, internal fields) | `lib/public/selection.ts`, `PRIVATE_FIELDS` |
 | Public map search result card | `components/public/ParcelResult.tsx` |
 | Public map header and side rail | `components/public/PublicApp.tsx` |
 | The five plan stages: names, short names, colours, keywords | `lib/public/stages.ts` |
@@ -187,7 +189,15 @@ is connected, citizens can only search the UPIs of planned parcels. To connect o
     "Editing is turned off…".
   - **Not** shared with Everyone.
 - **Rwanda_Physical_Plans_view** (the public view): shared with **Everyone**, read-only, attachments on.
-- **The public web map:** shared with Everyone. It should hold the **view**, not the editable layer.
+- **The public web map** ("Physical Plan Map"): shared with Everyone. What you change there shows in the
+  public app when the page is reloaded:
+  - basemap;
+  - layers and their visibility;
+  - the plans layer's styling (symbols, labels, transparency, visible range).
+
+  The web map may hold the editable layer or the view: the app draws the view with that layer's styling.
+  Pop-ups set in the web map are **not** shown, because the app shows its own parcel card and must never
+  reveal UPIs.
 - **Don't rename these fields:** `approval_date`/`approval_d`, `remarks`, `created_user`/`created_us`,
   `created_date`/`created_da`, `parcel_upi`, `area_sqm`, `district_1`, `cell_1`, and on site layers
   `site_name`, `site_stage`. The apps accept a full name or its 10-character shapefile cut.
@@ -215,6 +225,8 @@ The same logs are in Vercel → project → **Logs**.
 | New approval not on the public map | Up to 5-minute cache | Wait 5 minutes and reload |
 | A district missing from the landing menu | No approved plan inside its boundary yet | Approve one in the review app |
 | Sign-in loops inside Experience Builder | Browser blocking cookies in frames | Use username/password, or "Open in a new tab" |
+| Downloads do nothing inside Experience Builder | The embed frame blocks downloads | Already handled: downloads open in a new tab ("Your download is starting…") |
+| A GeoJSON download fails for a very large district | Vercel limits a response to about 4.5 MB | Use the Shapefile (zipped, much smaller) or narrow by site in Explore |
 | Console: "Register a service worker", "sandbox…", "Slow network…" | Experience Builder / Chrome notices | Harmless, ignore |
 
 ---

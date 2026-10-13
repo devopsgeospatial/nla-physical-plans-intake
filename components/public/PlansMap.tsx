@@ -8,6 +8,8 @@ import Polygon from "@arcgis/core/geometry/Polygon";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer";
 import FeatureFilter from "@arcgis/core/layers/support/FeatureFilter";
+import LabelClass from "@arcgis/core/layers/support/LabelClass";
+import { fromJSON as rendererFromJSON } from "@arcgis/core/renderers/support/jsonUtils";
 import SimpleRenderer from "@arcgis/core/renderers/SimpleRenderer";
 import type UniqueValueRenderer from "@arcgis/core/renderers/UniqueValueRenderer";
 import SimpleFillSymbol from "@arcgis/core/symbols/SimpleFillSymbol";
@@ -62,6 +64,44 @@ interface Props {
 /** Esri World Imagery, readable without sign-in or API key. */
 const PUBLIC_IMAGERY = "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer";
 const serviceUrl = (url: string) => url.replace(/\/+$/, "").toLowerCase();
+/** A layer's feature service, without the layer index: ".../Name/FeatureServer". */
+const serviceOf = (url: string) => serviceUrl(url).replace(/\/\d+$/, "");
+
+/**
+ * Gives `target` the styling `source` has in the web map: renderer, labels, opacity and visible scale
+ * range, read from the web map's own JSON (the source itself may not be loadable by the public).
+ */
+async function applyWebMapStyle(webmap: WebMap, source: FeatureLayer, target: FeatureLayer) {
+  try {
+    const data = (await webmap.portalItem?.fetchData()) as { operationalLayers?: WebMapLayerJson[] } | undefined;
+    const all: WebMapLayerJson[] = [];
+    const walk = (layers: WebMapLayerJson[] = []) => layers.forEach((l) => (all.push(l), walk(l.layers)));
+    walk(data?.operationalLayers);
+    const json = all.find((l) => l.id === source.id) ?? all.find((l) => serviceOf(l.url ?? "") === serviceOf(source.url ?? ""));
+    const definition = json?.layerDefinition;
+    const renderer = definition?.drawingInfo?.renderer;
+    if (renderer) target.renderer = rendererFromJSON(renderer) as FeatureLayer["renderer"];
+    const labels = definition?.drawingInfo?.labelingInfo;
+    if (labels?.length) {
+      target.labelingInfo = labels.map((l) => LabelClass.fromJSON(l));
+      target.labelsVisible = json?.showLabels ?? true;
+    }
+    if (typeof json?.opacity === "number") target.opacity = json.opacity;
+    if (typeof definition?.minScale === "number") target.minScale = definition.minScale;
+    if (typeof definition?.maxScale === "number") target.maxScale = definition.maxScale;
+  } catch (err) {
+    console.warn("[map] could not read the web map's styling for the plans layer", err);
+  }
+}
+
+interface WebMapLayerJson {
+  id?: string;
+  url?: string;
+  opacity?: number;
+  showLabels?: boolean;
+  layers?: WebMapLayerJson[];
+  layerDefinition?: { minScale?: number; maxScale?: number; drawingInfo?: { renderer?: object; labelingInfo?: object[] } };
+}
 const SITE_OUTLINE = new SimpleRenderer({
   symbol: new SimpleFillSymbol({ color: [23, 160, 219, 0.06], outline: { color: [23, 160, 219, 1], width: 2.2 } }),
 });
@@ -118,13 +158,23 @@ export default function PlansMap(props: Props) {
       const operational = webmap.layers.toArray().filter((l) => ![districtLayer, stageLayer, parcelLayer].includes(l as GraphicsLayer));
       void Promise.allSettled(operational.map((l) => l.load())).then(() => webmap.removeMany(operational.filter((l) => l.loadStatus === "failed")));
 
-      // The plans layer from the web map (keeps its zoning colours); added by address when the web map lacks it.
-      let plans = webmap.allLayers.find((l) => l.type === "feature" && serviceUrl((l as FeatureLayer).url ?? "") === serviceUrl(planLayerUrl).replace(/\/\d+$/, "")) as
-        | FeatureLayer
-        | undefined;
+      // The plans layer as styled in the web map. The web map may hold the public view itself, or the
+      // private editable layer behind it (Rwanda_Physical_Plans for Rwanda_Physical_Plans_view): then the
+      // view is drawn with that layer's styling, so changes made in Map Viewer show here too.
+      const featureLayers = webmap.allLayers.toArray().filter((l): l is FeatureLayer => l.type === "feature");
+      const viewService = serviceOf(planLayerUrl);
+      const sourceService = viewService.replace(/_view(\/featureserver)$/i, "$1");
+      let plans = featureLayers.find((l) => serviceOf(l.url ?? "") === viewService);
       if (!plans) {
-        plans = new FeatureLayer({ url: planLayerUrl, title: "Physical plans", popupEnabled: false });
-        webmap.add(plans, webmap.layers.indexOf(districtLayer));
+        const source = featureLayers.find((l) => serviceOf(l.url ?? "") === sourceService);
+        plans = new FeatureLayer({ url: planLayerUrl, title: source?.title || "Physical plans", popupEnabled: false });
+        if (source) {
+          await applyWebMapStyle(webmap, source, plans);
+          webmap.add(plans, webmap.layers.indexOf(source));
+          webmap.remove(source);
+        } else {
+          webmap.add(plans, webmap.layers.indexOf(districtLayer));
+        }
       }
       // Site boundaries: from the web map when it has them, added otherwise (drawing only, no queries).
       const siteLayers = sitesLayerUrls.map((url) => {
@@ -132,8 +182,8 @@ export default function PlansMap(props: Props) {
           | FeatureLayer
           | undefined;
         const layer = found ?? new FeatureLayer({ url, renderer: SITE_OUTLINE, popupEnabled: false });
+        // Layers of the web map keep the visibility set in Map Viewer; added ones are shown.
         if (!found) webmap.add(layer, webmap.layers.indexOf(plans!));
-        layer.visible = true;
         return { url, layer };
       });
 

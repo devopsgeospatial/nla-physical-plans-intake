@@ -177,10 +177,6 @@ export default function PublicApp({
   // ---- the sites chosen in Explore (by status, stage or name): the map shows and frames only them --
   const selectedSites = useMemo(() => (sites ? selectSites(sites, selection) : null), [sites, selection]);
   const selectedKeys = useMemo(() => selectedSites?.map((s) => s.key) ?? null, [selectedSites]);
-  const slug = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  const siteName = selection.site ? sites?.find((s) => s.key === selection.site)?.name : undefined;
-  const downloadLabel =
-    [district.slug, selection.status?.toLowerCase(), selection.stage ? `stage-${selection.stage}` : null, siteName ? slug(siteName) : null].filter(Boolean).join("_");
   const change = (next: Partial<Selection>) => setSelection((s) => ({ ...s, ...next }));
 
   const panelOpen = view !== null;
@@ -286,7 +282,7 @@ export default function PublicApp({
             {view === "explore" && <Explore sites={sites} selection={selection} onChange={change} />}
             {view === "documents" && <Documents district={district.slug} references={references} />}
             {view === "download" && (
-              <Download plans={handles?.plans ?? null} district={handles?.district ?? null} baseFilter={baseFilter} sites={sites} selected={selectedSites} label={downloadLabel} />
+              <Download district={district.slug} selection={selection} selected={selectedSites} />
             )}
             {view === "legend" && <Legend zoning={zoning} byStage={selection.byStage} />}
             {view === "layers" && <Layers view={handles?.view ?? null} />}
